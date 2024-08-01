@@ -1,6 +1,8 @@
 import matplotlib.pyplot as plt
 import numpy as np
 import random
+import pickle
+import csv
 from math import *
 
 # 常数设置
@@ -177,20 +179,20 @@ class RRT:
         # 在最大迭代次数内
         t = 0  # 初始化时间
         for i in range(self.max_iter):
-            print("#######################################")
-            print(f'第{i}步')
+            #print("#######################################")
+            #print(f'第{i}步')
             # 生成随机节点
             rnd_node = self.get_random_node(t)
-            print("当前时间", rnd_node.t)
+            #print("当前时间", rnd_node.t)
             # 找到离随机节点最近的现有节点
             nearest_ind = self.get_nearest_node_index(self.node_list, rnd_node)
             nearest_node = self.node_list[nearest_ind]
-            print("最近点的时间", nearest_node.t)
+            #print("最近点的时间", nearest_node.t)
             # 生成从现有节点到随机节点的新节点
             if nearest_node.t == t:
-                print("不需要多步模拟")
+                #print("不需要多步模拟")
                 new_node = self.steer(nearest_node, rnd_node, self.time_step, nearest_node.t)
-                print("更新后的时间", new_node.t)
+                #print("更新后的时间", new_node.t)
                 # 不与障碍物碰撞，加入节点list中
                 if self.check_collision(new_node, self.obstacle_list):
                     self.node_list.append(new_node)
@@ -206,9 +208,9 @@ class RRT:
                          """
                         return self.generate_final_course(len(self.node_list) - 1)
             else:
-                print("需要多步模拟")
+                #print("需要多步模拟")
                 new_node = self.steer(nearest_node, rnd_node, self.time_step, nearest_node.t)
-                print("第一步模拟后的时间", new_node.t)
+                #print("第一步模拟后的时间", new_node.t)
                 # 不与障碍物碰撞，加入节点list中
                 if self.check_collision(new_node, self.obstacle_list):
                     self.node_list.append(new_node)
@@ -224,14 +226,14 @@ class RRT:
                         """
                         return self.generate_final_course(len(self.node_list) - 1)
                 time_step = round((t - nearest_node.t) / self.time_step)  # 四舍五入向上取整
-                print("开始循环，循环内需要进行的次数", time_step)
-                print("不取整的循环次数", (t - nearest_node.t) / self.time_step)
+                #print("开始循环，循环内需要进行的次数", time_step)
+                #print("不取整的循环次数", (t - nearest_node.t) / self.time_step)
                 for _ in range(time_step):
-                    print("进入循环")
+                    #print("进入循环")
                     current_time = new_node.t
-                    print("此时的时间", current_time)
+                    #print("此时的时间", current_time)
                     new_node = self.steer(new_node, rnd_node, self.time_step, current_time)
-                    print("更新时间", new_node.t)
+                    #print("更新时间", new_node.t)
                     if self.check_collision(new_node, self.obstacle_list):
                         self.node_list.append(new_node)
                         # 如果new_node离目标足够近，尝试直接连接到目标，并检查是否碰撞
@@ -341,7 +343,8 @@ class RRT:
         dy = y - self.goal.y
         return hypot(dx, dy)
 
-    def draw_graph(self, all_path=False, final_path=None, time_list=None, obstacle_list=None, goal_range=None):
+    def draw_graph(self, all_path=False, final_path=None, time_list=None, obstacle_list=None,
+                   goal_range=None, save_dir=None):
         fig, ax = plt.subplots()
         if obstacle_list:
             for (ox, oy, size) in obstacle_list:
@@ -374,13 +377,15 @@ class RRT:
 
         plt.axis("equal")
         plt.grid(True)
-        plt.show()
+        if save_dir:
+            plt.savefig(save_dir)
+
+        if not save_dir:
+            plt.show()
 
 
 def main():
-    # start = [1, 1]
     start = random_start()
-    # goal = [3, 3]
     goal = random_target()
     goal_range = [(goal, 1.0 / 50)]
     map_dimensions = [0, 3]
@@ -395,16 +400,34 @@ def main():
     """
     obstacle_list = []
 
+    action_dir = './RRT_output/actions.csv'
+    img_dir = './RRT_output/trajectory.png'
+    len_old = 40
+    for _ in range(20):
+        rrt = RRT(start, goal, map_dimensions, dt, expand_distance=L / 50, obstacle_list=obstacle_list)
+        path, time_list, action_list = rrt.plan()
+        len_new = len(action_list)
+        if len_new < len_old:
+            # 保存为CSV文件
+            with open(action_dir, 'w', newline='') as file:
+                writer = csv.writer(file)
+                writer.writerow(action_list)
+                rrt.draw_graph(all_path=True, final_path=path, time_list=time_list, goal_range=goal_range,
+                               save_dir=img_dir)
+                len_old = len_new
+
+
+
+    """""""""
     rrt = RRT(start, goal, map_dimensions, dt, expand_distance=L / 50, obstacle_list=obstacle_list)
     path, time_list, action_list = rrt.plan()
-
+    # 验证轨迹运动状态
     for i in range(len(action_list)):
         print("########################################")
         print(path[i + 1])
         print(step(path[i], action_list[i], time_list[i]))
-
     rrt.draw_graph(all_path=True, final_path=path, time_list=time_list, goal_range=goal_range)
-
+    """
 
 
 

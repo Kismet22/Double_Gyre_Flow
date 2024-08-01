@@ -122,22 +122,25 @@ class RRT:
         # 在最大迭代次数内
         t = 0  # 初始化时间
         for i in range(self.max_iter):
+            print("#######################################")
             # 生成随机节点
             rnd_node = self.get_random_node(t)
-            # print("Radon_node:", [rnd_node.x, rnd_node.y])
+            print("rnd_node_t", rnd_node.t)
             # 找到离随机节点最近的现有节点
             nearest_ind = self.get_nearest_node_index(self.node_list, rnd_node)
             nearest_node = self.node_list[nearest_ind]
+            print("nearest_node_t", nearest_node.t)
             # 生成从现有节点到随机节点的新节点
             new_node, new_action = self.steer(nearest_node, rnd_node, self.time_step, t)
-            self.action_list.append(new_action)
-            # print("Node:", [new_node.x, new_node.y])
+            print("new_node_t", new_node.t)
             # 不与障碍物碰撞，加入节点list中
             if self.check_collision(new_node, self.obstacle_list):
                 self.node_list.append(new_node)
+                self.action_list.append(new_action)
             # 如果new_node离目标足够近，尝试直接连接到目标，并检查是否碰撞
             if self.distance_to_goal(new_node.x, new_node.y) <= self.expand_distance:
-                final_node = self.steer(new_node, self.goal, self.expand_distance, (t+self.time_step))
+                final_node, final_action = self.steer(new_node, self.goal, self.expand_distance, (t + self.time_step))
+                self.action_list.append(final_action)
                 if self.check_collision(final_node, self.obstacle_list):
                     # 如果找到路径，生成最终路径
                     return self.generate_final_course(len(self.node_list) - 1)
@@ -145,23 +148,9 @@ class RRT:
             t += self.time_step  # 更新时间
         return None
 
-    """""""""
     # steer方法从from_node向to_node生成一个新的节点new_node
-    def steer(self, from_node, to_node, extend_length=float("inf")):
-        new_node = Node(from_node.x, from_node.y)
-        # 计算角度和距离
-        d, theta = self.calc_distance_and_angle(new_node, to_node)
-
-        new_node.x += min(extend_length, d) * cos(theta)
-        new_node.y += min(extend_length, d) * sin(theta)
-        new_node.parent = from_node
-
-        return new_node
-    """
-
     def steer(self, from_node, to_node, time_step, t):
-        # print("activate steer")
-        new_node = Node(from_node.x, from_node.y, t + 1)
+        new_node = Node(from_node.x, from_node.y, t + 0.1)
         new_node.x, new_node.y, action = self.nonlinear_motion(from_node, to_node, time_step, t)
         new_node.parent = from_node
         return new_node, action
@@ -170,11 +159,12 @@ class RRT:
         d, theta = self.calc_distance_and_angle(from_node, to_node)
         new_action = theta
         flow_x, flow_y = self.velocity_function(from_node.x, from_node.y, t)
-        dx = (U_swim * cos(theta) + flow_x) * delta_t
-        dy = (U_swim * sin(theta) + flow_y) * delta_t
+        dx = (U_swim * cos(theta) + flow_x) * (delta_t + to_node.t - from_node.t)
+        dy = (U_swim * sin(theta) + flow_y) * (delta_t + to_node.t - from_node.t)
+        # dx = (U_swim * cos(theta) + flow_x) * delta_t
+        # dy = (U_swim * sin(theta) + flow_y) * delta_t
         new_x = from_node.x + dx
         new_y = from_node.y + dy
-        # print("nonlinear_motion_angle:", theta)
         return new_x, new_y, new_action
 
     def velocity_function(self, x, y, t):
@@ -208,7 +198,12 @@ class RRT:
     @staticmethod
     # 返回距离最小的节点索引
     def get_nearest_node_index(node_list, rnd_node):
-        dlist = [(node.x - rnd_node.x) ** 2 + (node.y - rnd_node.y) ** 2 for node in node_list]
+        """""""""
+        dlist = [(node.x - rnd_node.x) ** 2 + (node.y - rnd_node.y) ** 2 + (rnd_node.t - node.t) * 100
+                 for node in node_list]
+        """
+        dlist = [(node.x - rnd_node.x) ** 2 + (node.y - rnd_node.y) ** 2
+                 for node in node_list]
         minind = dlist.index(min(dlist))
         return minind
 
@@ -244,6 +239,7 @@ class RRT:
 def main():
     start = [1, 1]
     goal = [3, 3]
+    goal_range = [(3, 3, 1.0 / 6)]
     map_dimensions = [0, 4]
 
     """""""""
@@ -254,9 +250,8 @@ def main():
         (7, 5, 2),
     ]
     """
-    obstacle_list = [
-        (3, 3, 0.5),
-    ]
+    obstacle_list = []
+
     rrt = RRT(start, goal, map_dimensions, dt, obstacle_list)
     path, time_list = rrt.plan()
     actions = rrt.action_list
@@ -264,13 +259,17 @@ def main():
     # print("The Path:", path)
 
     if path is None:
-        print("Cannot find path")
+        print("无法找到轨迹")
     else:
         print("time_list", time_list)
-        print("Found path!!")
+        print("轨迹寻找成功")
 
         fig, ax = plt.subplots()
         for (ox, oy, size) in obstacle_list:
+            circle = plt.Circle((ox, oy), size, color='b')
+            ax.add_artist(circle)
+
+        for (ox, oy, size) in goal_range:
             circle = plt.Circle((ox, oy), size, color='r')
             ax.add_artist(circle)
 

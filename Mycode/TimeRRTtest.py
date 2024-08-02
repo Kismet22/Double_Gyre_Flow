@@ -4,6 +4,7 @@ import random
 import pickle
 import csv
 from math import *
+import pandas as pd
 
 # 常数设置
 U_swim = 0.9
@@ -11,7 +12,7 @@ A = 2 * U_swim / 3
 epsilon = 0.3
 L = 1
 target_center = (0.5 * L, 0.5 * L)
-start_center = (1.5 * L, 1.5 * L)
+start_center = (1.5 * L, 0.5 * L)
 D_range = 0.5 * L
 
 omega = 20 * pi * U_swim / (3 * L)
@@ -179,20 +180,20 @@ class RRT:
         # 在最大迭代次数内
         t = 0  # 初始化时间
         for i in range(self.max_iter):
-            #print("#######################################")
-            #print(f'第{i}步')
+            # print("#######################################")
+            # print(f'第{i}步')
             # 生成随机节点
             rnd_node = self.get_random_node(t)
-            #print("当前时间", rnd_node.t)
+            # print("当前时间", rnd_node.t)
             # 找到离随机节点最近的现有节点
             nearest_ind = self.get_nearest_node_index(self.node_list, rnd_node)
             nearest_node = self.node_list[nearest_ind]
-            #print("最近点的时间", nearest_node.t)
+            # print("最近点的时间", nearest_node.t)
             # 生成从现有节点到随机节点的新节点
             if nearest_node.t == t:
-                #print("不需要多步模拟")
+                # print("不需要多步模拟")
                 new_node = self.steer(nearest_node, rnd_node, self.time_step, nearest_node.t)
-                #print("更新后的时间", new_node.t)
+                # print("更新后的时间", new_node.t)
                 # 不与障碍物碰撞，加入节点list中
                 if self.check_collision(new_node, self.obstacle_list):
                     self.node_list.append(new_node)
@@ -208,9 +209,9 @@ class RRT:
                          """
                         return self.generate_final_course(len(self.node_list) - 1)
             else:
-                #print("需要多步模拟")
+                # print("需要多步模拟")
                 new_node = self.steer(nearest_node, rnd_node, self.time_step, nearest_node.t)
-                #print("第一步模拟后的时间", new_node.t)
+                # print("第一步模拟后的时间", new_node.t)
                 # 不与障碍物碰撞，加入节点list中
                 if self.check_collision(new_node, self.obstacle_list):
                     self.node_list.append(new_node)
@@ -226,14 +227,14 @@ class RRT:
                         """
                         return self.generate_final_course(len(self.node_list) - 1)
                 time_step = round((t - nearest_node.t) / self.time_step)  # 四舍五入向上取整
-                #print("开始循环，循环内需要进行的次数", time_step)
-                #print("不取整的循环次数", (t - nearest_node.t) / self.time_step)
+                # print("开始循环，循环内需要进行的次数", time_step)
+                # print("不取整的循环次数", (t - nearest_node.t) / self.time_step)
                 for _ in range(time_step):
-                    #print("进入循环")
+                    # print("进入循环")
                     current_time = new_node.t
-                    #print("此时的时间", current_time)
+                    # print("此时的时间", current_time)
                     new_node = self.steer(new_node, rnd_node, self.time_step, current_time)
-                    #print("更新时间", new_node.t)
+                    # print("更新时间", new_node.t)
                     if self.check_collision(new_node, self.obstacle_list):
                         self.node_list.append(new_node)
                         # 如果new_node离目标足够近，尝试直接连接到目标，并检查是否碰撞
@@ -277,10 +278,12 @@ class RRT:
     # generate_final_course方法生成从起点到终点的路径
     # 从终点开始，通过父节点指针逐步回溯到起点，生成路径
     def generate_final_course(self, goal_ind):
+        print("start to generate")
         path = [[self.goal.x, self.goal.y]]
         path_time = []
         actions = []
         node = self.node_list[goal_ind]
+        actions.append(node.at)
         path.append([node.x, node.y])
         path_time.append(node.t)
         node = node.parent
@@ -401,7 +404,10 @@ def main():
     obstacle_list = []
 
     action_dir = './RRT_output/actions.csv'
+    path_dir = './RRT_output/trajectory.csv'
     img_dir = './RRT_output/trajectory.png'
+
+    """""""""
     len_old = 40
     for _ in range(20):
         rrt = RRT(start, goal, map_dimensions, dt, expand_distance=L / 50, obstacle_list=obstacle_list)
@@ -412,23 +418,40 @@ def main():
             with open(action_dir, 'w', newline='') as file:
                 writer = csv.writer(file)
                 writer.writerow(action_list)
-                rrt.draw_graph(all_path=True, final_path=path, time_list=time_list, goal_range=goal_range,
-                               save_dir=img_dir)
-                len_old = len_new
 
+            with open(path_dir, 'w', newline='') as file:
+                writer = csv.writer(file)
+                writer.writerow(path)
 
+            rrt.draw_graph(all_path=True, final_path=path, time_list=time_list, goal_range=goal_range,
+                           save_dir=img_dir)
+
+            len_old = len_new
+    
+    """
 
     """""""""
     rrt = RRT(start, goal, map_dimensions, dt, expand_distance=L / 50, obstacle_list=obstacle_list)
     path, time_list, action_list = rrt.plan()
+    """
+
+    """""""""
+    df = pd.read_csv(action_dir, header=None, dtype=str)  # 读取为字符串类型
+    action_list = df.values.flatten().tolist()  # 将数据转换为一维列表
+    t = 0
+    path = [1.5, 0.5]
     # 验证轨迹运动状态
     for i in range(len(action_list)):
         print("########################################")
-        print(path[i + 1])
-        print(step(path[i], action_list[i], time_list[i]))
-    rrt.draw_graph(all_path=True, final_path=path, time_list=time_list, goal_range=goal_range)
+        # print(path[i + 1])
+        # print(step(path[i], action_list[i], time_list[i]))
+        print("action", float(action_list[i]))
+        new_path = step(path, float(action_list[i]), t)
+        print(new_path)
+        path = new_path
+        t = t + 0.1
+    # rrt.draw_graph(all_path=True, final_path=path, time_list=time_list, goal_range=goal_range)
     """
-
 
 
 if __name__ == '__main__':

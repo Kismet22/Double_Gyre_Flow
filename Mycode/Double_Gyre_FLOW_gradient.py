@@ -145,108 +145,114 @@ x0 = np.array([1.5 * L, 0.5 * L, 0])
 xf = np.array([0.5 * L, 0.5 * L, 0])
 
 
-# 计算轨迹的总时间步长
-def compute_total_time(path):
-    total_time = 0
-    for i in range(1, len(path)):
-        total_time += np.linalg.norm(path[i] - path[i - 1])
-    return total_time
-
-
 # 计算轨迹的平滑性
 def compute_smoothness(path):
     smoothness = 0
     path = np.array(path)  # 确保路径是 NumPy 数组
-    for i in range(1, len(path) - 1):
-        smoothness += np.linalg.norm(path[i - 1] - 2 * path[i] + path[i + 1])
+    for number in range(1, len(path) - 1):
+        # 平滑性的公式：二阶差分，(p[i-1] - 2p[i] + p[i+1])^2，希望中间点是前后两个点的均值
+        smoothness += np.linalg.norm(path[number - 1] - 2 * path[number] + path[number + 1])
     return smoothness
 
 
 # 定义目标函数
-def objective(control_in):
-    # 目标：到达终点k1(1)
-    # 目标：缩短时间步长k2(10)
-    # 目标：平滑轨迹k3(1)
-    k1 = 1000
-    k2 = 5
-    k3 = 1
+def objective(input_control):
+    control_in = input_control
+    # time_step = len(input_control)
+    k1 = 1000  # 到达终点(数量级:最大0.1)
+    k2 = 20  # 缩短时间
+    k3 = 0  # 轨迹平滑程度(数量级：1)
     path = []
     time_cost = 0
     state = x0
     path.append([state[0], state[1]])
-    for i in range(len(control_in)):
-        state = agent_dynamics_withtime(state, control_in[i])
-        time_cost += 1
+    for number in range(len(control_in)):
+        state = agent_dynamics_withtime(state, control_in[number])
         path.append([state[0], state[1]])
+        time_cost += 1
+        if distance_to_goal(path[-1], [xf[0], xf[1]]) < L/20:
+            print("提前到达终点,时间步数为:", time_cost)
+            break
     smooth_cost = compute_smoothness(path)
+    # goal_cost = (distance_to_goal(path[-1], [xf[0], xf[1]]) - L/20)
     goal_cost = distance_to_goal(path[-1], [xf[0], xf[1]])
-    # 对损失函数的定义
-    print("time_cost", time_cost)
-    print("smooth_cost", smooth_cost)
-    print("goal_cost", goal_cost)
-    cost = k2 * time_cost + k3 * smooth_cost + k1 * goal_cost
+    cost = k1 * goal_cost + k2 * time_cost + k3 * smooth_cost
     return cost
 
 
-# 计算目标函数的梯度
-def compute_gradient(control_in):
-    eps = 1e-8
-    object_gradient = np.zeros_like(control_in)
-    for i in range(len(control_in)):
-        control_in[i] += eps
-        f1 = objective(control_in)
-        control_in[i] -= 2 * eps
-        f2 = objective(control_in)
-        object_gradient[i] = (f1 - f2) / (2 * eps)
-        control_in[i] += eps
-    return object_gradient
+u_min = np.array([-pi])
+u_max = np.array([pi])
 
 
-# 投影函数：将控制输入投影到约束集内
-def project(control_in, input_min, input_max):
-    return np.clip(control_in, input_min, input_max)
+# 定义约束条件函数
+def constraint_u_min(U):
+    U = U.reshape(len(U), -1)
+    return (U - u_min).flatten()
 
 
-# 设置控制输入的上下限
-u_min = -pi
-u_max = pi
+def constraint_u_max(U):
+    U = U.reshape(len(U), -1)
+    return (u_max - U).flatten()
 
-# 学习率
-learning_rate = 0.01
 
-# 最大迭代次数
-max_iter = 100
+def constraint_time_step(U):
+    return U[-1] - 1  # 确保时间步长至少为1
 
+
+# 读取控制输入数据
 action_dir = './RRT_output/19步/actions.csv'
 df = pd.read_csv(action_dir, header=None, dtype=str)  # 读取为字符串类型
-data = df.values.flatten().astype(float).tolist()
+data = df.values.flatten().astype(float).tolist()  # 将数据转换为一维浮点数列表
 
-initial_guess = data
-print("RRT控制输入", initial_guess)
+# 初始化猜想
+initial_guess = np.zeros(len(data))
+print("初始化随机猜想", initial_guess)
 
-# 投影梯度下降算法
-control_inputs = initial_guess
-for _ in range(max_iter):
-    gradient = compute_gradient(control_inputs)
-    control_inputs = control_inputs - learning_rate * gradient
-    control_inputs = project(control_inputs, u_min, u_max)
+for i in range(len(data)):
+    initial_guess[i] = data[i]
+print("RRT控制输入:", initial_guess)
+print("RRT控制输入的时间步长:", len(initial_guess))
 
-    # 动态调整路径的点数
-    new_control_points = [control_inputs[0]]
-    for i in range(1, len(control_inputs)):
-        if np.linalg.norm(control_inputs[i] - control_inputs[i - 1]) > 0.1:  # 合并相邻的近似点
-            new_control_points.append(control_inputs[i])
-    control_inputs = np.array(new_control_points)
+# 定义约束条件
+con1 = {'type': 'ineq', 'fun': constraint_u_min}
+con2 = {'type': 'ineq', 'fun': constraint_u_max}
+# con3 = {'type': 'ineq', 'fun': constraint_time_step}
+constraints = [con1, con2]
 
+# 记录目标函数值的列表
+objective_values = []
+
+
+# 定义回调函数
+def callback(xk):
+    obj_value = objective(xk)
+    objective_values.append(obj_value)
+    print(f"当前目标函数值: {obj_value}")
+
+
+# 使用SLSQP方法进行优化
+result = minimize(objective, initial_guess, method='SLSQP', constraints=constraints, callback=callback)
 # 输出优化结果
-print("最优控制输入：", control_inputs)
-print("最优目标函数值：", objective(control_inputs))
+# optimal_time = round(result.x[-1])
+# optimal_output = result.x[:optimal_time]
+optimal_time = len(result.x)
+optimal_output = result.x
+print("最优时间步长:", optimal_time)
+print("最优控制输入:", optimal_output)
+print("最优目标函数值:", result.fun)
+
+# 绘制目标函数值的变化图
+plt.plot(objective_values)
+plt.xlabel('迭代次数')
+plt.ylabel('目标函数值')
+plt.title('优化过程中目标函数值的变化')
+plt.show()
 
 # 绘制轨迹
 x = x0
 trajectory = [x]
-U_opt = control_inputs
-for k in range(len(control_inputs)):
+U_opt = optimal_output.reshape(optimal_time, -1)
+for k in range(optimal_time):
     x = agent_dynamics_withtime(x, U_opt[k])
     trajectory.append(x)
 

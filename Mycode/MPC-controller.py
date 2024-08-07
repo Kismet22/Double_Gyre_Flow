@@ -11,7 +11,7 @@ U_swim = 0.9
 epsilon = 0.3
 A = 2 * U_swim / 3
 L = 1
-R = 0.25 * L
+r = 0.25 * L
 omega = 20 * pi * U_swim / (3 * L)
 target_center = (0.5 * L, 0.5 * L)
 start_center = (1.5 * L, 0.5 * L)
@@ -20,7 +20,8 @@ start_center = (1.5 * L, 0.5 * L)
 # 使用IPOPT方法的封装实现
 class MPCController:
     def __init__(self, delta_t, states_object, actions_object, p_n_steps,
-                 state_matrix, action_matrix, agent_dynamics_function, low_limit, high_limit,
+                 state_matrix, action_matrix, agent_dynamics_function,
+                 low_limit, high_limit,
                  max_iter=100, print_level=0, print_time=0, acceptable_tol=1e-8, acceptable_obj_change_tol=1e-8):
         self.dt = delta_t  # 系统采样时间
         self.N = p_n_steps  # 预测步长
@@ -49,7 +50,6 @@ class MPCController:
 
         # 利用CasADi构建一个函数
         self.f = ca.Function('f', [self.states, self.controls], [self.rhs], ['input_state', 'control_input'], ['rhs'])
-
         # 4 构建MPC
         self._construct_mpc()
 
@@ -72,9 +72,20 @@ class MPCController:
 
         # 优化目标
         obj = 0
+        """""""""
+        # 这是目前效果最好的目标函数设置
+        # 状态约束
         for i in range(self.N):
-            obj = obj + ca.mtimes([(X[:, i] - P[self.n_states:]).T, self.Q, X[:, i] - P[self.n_states:]]) + \
-                  ca.mtimes([U[:, i].T, self.R, U[:, i]])
+            obj = obj + ca.mtimes([(X[:, i] - P[self.n_states:]).T, self.Q, X[:, i] - P[self.n_states:]])
+        """
+
+        # 状态约束
+        for i in range(self.N):
+            obj = obj + ca.mtimes([(X[:, i] - P[self.n_states:]).T, self.Q, X[:, i] - P[self.n_states:]])
+
+        # 动作约束，追求平滑性
+        for i in range(1, self.N):
+            obj += ca.mtimes([(U[:, i] - U[:, i - 1]).T, self.R, (U[:, i] - U[:, i - 1])])
 
         # 约束条件定义
         g = []
@@ -114,7 +125,6 @@ class MPCController:
         return u_opt, sol['f'], s_opt
 
 
-N = 6  # 每个状态进行预测的步数
 x = ca.SX.sym('x')  # x坐标
 y = ca.SX.sym('y')  # y坐标
 t = ca.SX.sym('time')  # 时间步
@@ -122,6 +132,17 @@ states = ca.vertcat(x, y, t)
 
 theta = ca.SX.sym('theta')
 actions = ca.vertcat(theta)
+
+"""""""""
+# 目前最好的矩阵设计
+# 位置惩罚矩阵
+Q = np.zeros((3, 3))  # 全零 2x2 矩阵，用于惩罚位置
+Q[:2, :2] = np.array([[10.0, 0.0],  # 对状态矩阵的前两个进行惩罚
+                      [0.0, 10.0]])
+Q[2][2] = 10.0
+# 时间惩罚矩阵
+R = np.array([0.0])
+"""
 
 # 位置惩罚矩阵
 Q = np.zeros((3, 3))  # 全零 2x2 矩阵，用于惩罚位置
@@ -131,6 +152,7 @@ Q[2][2] = 10.0
 # 时间惩罚矩阵
 R = np.array([0.0])
 
+N = 20  # 每个状态进行预测的步数
 control_max = ca.pi
 lbx = []  # 最低约束条件
 ubx = []  # 最高约束条件
@@ -139,20 +161,22 @@ for _ in range(N):
     lbx.append(-control_max)
     ubx.append(control_max)
 
-x0 = np.array([1.5, 0.5, 0.0]).reshape(-1, 1)  # 初始始状态
+x0 = np.array([0.5, 1.5, 0.0]).reshape(-1, 1)  # 初始始状态
+x_start = x0
 xs = np.array([0.5, 0.5, 0.0]).reshape(-1, 1)  # 末状态
 
 env = Double_gyre_Flow(U_swim=U_swim, epsilon=epsilon, L=L, dt=dt, mode='casadi')
 mpc = MPCController(delta_t=dt, p_n_steps=N, states_object=Q, actions_object=R,
                     state_matrix=states, action_matrix=actions,
-                    agent_dynamics_function=env.agent_dynamics_withtime, low_limit=lbx, high_limit=ubx)
+                    agent_dynamics_function=env.agent_dynamics_withtime,
+                    low_limit=lbx, high_limit=ubx)
 
 # 仿真条件和相关变量
 t0 = 0.0  # 仿真时间
 n_controls = 1
 u0 = np.array([0.0] * N).reshape(-1, n_controls)  # 系统初始控制状态，为了统一本例中所有numpy有关,N行,n_controls列,每个值都是0
 x_c = []  # 存储每一次的N步序列预测结果
-position_record = []  # 存储真实的运动轨迹序列
+position_record = [[x0[0], x0[1]]]  # 存储真实的运动轨迹序列
 u_c = []  # 存储真实的控制序列
 t_c = []  # 保存时间
 xx = []  # 存储真实的状态序列
@@ -189,9 +213,6 @@ while np.linalg.norm(x0[:2] - xs[:2]) > L / 50 and mpciter - sim_time / dt < 0.0
     # 计数器+1
     mpciter = mpciter + 1
 
-# 绘制轨迹图
-xx = np.array(xx)  # 转换为numpy数组
-
 plt.figure(figsize=(10, 6))
 
 # 绘制位置记录
@@ -199,7 +220,10 @@ position_record = np.array(position_record)
 plt.plot(position_record[:, 0], position_record[:, 1], 'bo-', label='Trajectory')
 
 # 绘制目标位置
+plt.plot(x_start[0], x_start[1], 'ro', label='Start Position')
 plt.plot(xs[0], xs[1], 'go', label='Target Position')
+circle = plt.Circle((xs[0], xs[1]), radius=L / 50, color='g', fill=False, linestyle='--', linewidth=1.5)
+plt.gca().add_patch(circle)
 
 # 添加标题和标签
 plt.title('System State Trajectories')

@@ -5,6 +5,7 @@ import matplotlib.pyplot as plt
 import random
 import csv
 import pandas as pd
+from FlowEnvironment import Double_gyre_Flow
 
 # 设置中文字体
 plt.rcParams['font.sans-serif'] = ['SimHei']  # 用黑体显示中文
@@ -23,121 +24,7 @@ omega = 20 * pi * U_swim / (3 * L)
 D = 1
 dt = 0.1
 
-
-def random_start():
-    # 目标区域在一个圆形的范围内
-    x_center = 1.5 * L
-    y_center = 0.5 * L
-
-    # 生成随机角度
-    angle = random.uniform(0, 2 * pi)
-
-    # 生成随机半径
-    # radius = random.uniform(0, 0.25 * L)
-    radius = 0
-
-    # 将极坐标转换为直角坐标
-    x = x_center + radius * cos(angle)
-    y = y_center + radius * sin(angle)
-    startpoint = [x, y]
-    return startpoint
-
-
-def random_target():
-    # 目标区域在一个圆形的范围内
-    x_center = 0.5 * L
-    y_center = 0.5 * L
-
-    # 生成随机角度
-    angle = random.uniform(0, 2 * pi)
-
-    # 生成随机半径
-    # radius = random.uniform(0, 0.25 * L)
-    radius = 0
-
-    # 将极坐标转换为直角坐标
-    x = x_center + radius * cos(angle)
-    y = y_center + radius * sin(angle)
-    startpoint = [x, y]
-    return startpoint
-
-
-# 动力学函数
-def f_1(pos_x, t):
-    """
-
-    param pos_x:          position x
-    param t:        simulation time
-
-    return: f(x,t)
-    """
-    out_put = epsilon * sin(omega * t) * pos_x ** 2 + pos_x - 2 * epsilon * sin(omega * t) * pos_x
-    return out_put
-
-
-def psi(pos_x, pos_y, t):
-    """
-
-    param pos_x:          position x
-    param pos_y:          position y
-    param t:        simulation time
-
-    return: ψ(x,y,t)
-    """
-
-    out_put = A * sin(pi * f_1(pos_x, t)) * sin(pi * pos_y)
-    return out_put
-
-
-def U_flow_x(pos_x, pos_y, t):
-    """
-
-    param pos_x:          position x
-    param pos_y:          position y
-    param t:        simulation time
-
-    return: vflow_x
-    """
-
-    out_put = -pi * A * sin(pi * f_1(pos_x, t)) * cos(pi * pos_y)
-    return out_put
-
-
-def U_flow_y(pos_x, pos_y, t):
-    """
-
-    param pos_x:          position x
-    param pos_y:          position y
-    param t:        simulation time
-
-    return: vflow_y
-    """
-
-    out_put = pi * A * cos(pi * f_1(pos_x, t)) * sin(pi * pos_y) * (
-            2 * epsilon * sin(omega * t) * pos_x
-            + 1 - 2 * epsilon * sin(omega * t))
-    return out_put
-
-
-def agent_dynamics_withtime(state, action):
-    pos_x, pos_y, t = state[0], state[1], state[2]
-    flow_x = U_flow_x(pos_x, pos_y, t)
-    flow_y = U_flow_y(pos_x, pos_y, t)
-    dx = (U_swim * cos(action) + flow_x) * dt
-    dy = (U_swim * sin(action) + flow_y) * dt
-    new_x = pos_x + dx
-    new_y = pos_y + dy
-    new_t = t + dt
-    state_new = [new_x, new_y, new_t]
-    return state_new
-
-
-def distance_to_goal(current, goal):
-    dx = current[0] - goal[0]
-    dy = current[1] - goal[1]
-    # hypot(dx, dy),返回欧式距离
-    return hypot(dx, dy)
-
+env = Double_gyre_Flow(U_swim=U_swim, L=L, epsilon=epsilon, dt=dt)
 
 # 梯度下降优化的目标：
 # 1、确保智能体到达终点范围
@@ -145,14 +32,14 @@ def distance_to_goal(current, goal):
 
 
 # 初始状态和目标状态
-x0 = np.array([1.5 * L, 0.5 * L, 0])
-xf = np.array([0.5 * L, 0.5 * L, 1.2])
+x0 = np.array([0.5 * L, 1.5 * L, 0])
+xf = np.array([0.25 * L, 0.5 * L, 1.2])
 
 # 最终状态权重矩阵
 # @ 矩阵乘法
 Q_f = np.array([[100, 0, 0], [0, 100, 0], [0, 0, 300]])
 
-N = 12
+N = 16
 
 
 # 定义目标函数
@@ -160,7 +47,7 @@ def objective(U):
     U = U.reshape(N, -1)
     x = x0
     for k in range(N):
-        x = agent_dynamics_withtime(x, U[k])
+        x = env.agent_dynamics_withtime(x, U[k])
     cost = (x - xf).T @ Q_f @ (x - xf)
     return cost
 
@@ -180,7 +67,7 @@ def constraint_u_max(U):
     return (u_max - U).flatten()
 
 
-action_dir = './RRT_output/19步/actions.csv'
+action_dir = './RRT_output/29步/actions.csv'
 df = pd.read_csv(action_dir, header=None, dtype=str)  # 读取为字符串类型
 data = df.values.flatten().tolist()  # 将数据转换为一维列表
 
@@ -224,14 +111,18 @@ x = x0
 trajectory = [x]
 U_opt = result.x.reshape(N, -1)
 for k in range(N):
-    x = agent_dynamics_withtime(x, U_opt[k])
+    x = env.agent_dynamics_withtime(x, U_opt[k])
     trajectory.append(x)
 
 state_trajectory = np.array(trajectory)
 print("末位置", trajectory[-1])
-print(f'距离差:{distance_to_goal(trajectory[-1], xf)};限制距离:{L / 50}')
+print(f'距离差:{env.distance_to_goal(trajectory[-1], xf)};限制距离:{L / 50}')
 
 plt.plot(state_trajectory[:, 0], state_trajectory[:, 1], marker='o')
+plt.plot(x0[0], x0[1], 'ro', label='Start Position')
+plt.plot(xf[0], xf[1], 'go', label='Target Position')
+circle = plt.Circle((xf[0], xf[1]), radius=L / 50, color='g', fill=False, linestyle='--', linewidth=1.5)
+plt.gca().add_patch(circle)
 plt.title('系统状态轨迹')
 plt.xlabel('位置 x')
 plt.ylabel('位置 y')

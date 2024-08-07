@@ -1,7 +1,17 @@
 import numpy as np
 import random
-from math import *
 import casadi as ca
+from math import *
+from scipy.io import loadmat
+
+dir_name = './flow_field/DoubleGyre_grid_0.0to2.0of41_0.0to1.0of21.mat'
+data = loadmat(dir_name)
+Vel_grid = data['Vel_grid']
+X_grid = data['x_grid']  # (41, 21) Δx = 0.05
+Y_grid = data['y_grid']  # (41, 21) Δy = 0.05
+U_grid = data['u_grid']  # (200, 41, 21) Δt = 0.01
+V_grid = data['v_grid']  # (200, 41, 21)
+O_grid = data['o_grid']  # (41, 21)
 
 
 # 双环流智能体更新环境
@@ -56,7 +66,7 @@ class Double_gyre_Flow:
                 2 * self.epsilon * sin(self.omega * t) * pos_x
                 + 1 - 2 * self.epsilon * sin(self.omega * t))
 
-    def agent_dynamics_withtime(self, state, action):
+    def agent_dynamics_withtime(self, state, action, mode='math'):
         if self.mode == 'casadi' and ca is not None:
             pos_x, pos_y, pos_t = state[0], state[1], state[2]
             v_flow_x = self.U_flow_x(pos_x, pos_y, pos_t)
@@ -66,9 +76,12 @@ class Double_gyre_Flow:
             delta_pos_y = self.U_swim * ca.sin(action) + v_flow_y
             delta_t = 1
             return ca.vertcat(delta_pos_x, delta_pos_y, delta_t)
-        pos_x, pos_y, t = state
-        flow_x = self.U_flow_x(pos_x, pos_y, t)
-        flow_y = self.U_flow_y(pos_x, pos_y, t)
+        pos_x, pos_y, t = state[0], state[1], state[2]
+        if mode == 'grid':
+            flow_x, flow_y = self.get_speed(state)
+        else:
+            flow_x = self.U_flow_x(pos_x, pos_y, t)
+            flow_y = self.U_flow_y(pos_x, pos_y, t)
         dx = (self.U_swim * cos(action) + flow_x) * self.dt
         dy = (self.U_swim * sin(action) + flow_y) * self.dt
         new_x = pos_x + dx
@@ -83,14 +96,32 @@ class Double_gyre_Flow:
         dy = current[1] - goal[1]
         return hypot(dx, dy)
 
+    @staticmethod
+    def get_speed(state):
+        t_index = state[2]
+        x_index = int((state[0] - X_grid[0, 0]) / (X_grid[1, 0] - X_grid[0, 0]))
+        y_index = int((state[1] - Y_grid[0, 0]) / (Y_grid[0, 1] - Y_grid[0, 0]))
+        u = U_grid[t_index][x_index][y_index]
+        v = V_grid[t_index][x_index][y_index]
+        return u, v
+
+    @staticmethod
+    def get_speed_ca(state):
+        t_index = state[0]
+        x_index = ca.floor((state[0] - X_grid[0, 0]) / (X_grid[1, 0] - X_grid[0, 0]))
+        y_index = ca.floor((state[1] - Y_grid[0, 0]) / (Y_grid[0, 1] - Y_grid[0, 0]))
+        u = U_grid[t_index][x_index][y_index]
+        v = V_grid[t_index][x_index][y_index]
+        return u, v
+
     def get_start(self, center=None, angle=None, radius=None):
         if center:
             x_center = center[0]
             y_center = center[1]
         else:
             # 目标区域在一个圆形的范围内
-            x_center = 1.5 * self.L
-            y_center = 0.5 * self.L
+            x_center = 0.5 * self.L
+            y_center = 1.5 * self.L
 
         if angle:
             angle = angle

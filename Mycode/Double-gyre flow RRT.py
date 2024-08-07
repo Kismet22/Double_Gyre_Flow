@@ -5,7 +5,7 @@ import pickle
 import csv
 from math import *
 import pandas as pd
-
+from FlowEnvironment import Double_gyre_Flow
 
 # plot中文字体设置
 plt.rcParams['font.sans-serif'] = ['SimHei']  # 用黑体显示中文
@@ -24,115 +24,7 @@ omega = 20 * pi * U_swim / (3 * L)
 D = 1
 dt = 0.1
 
-
-def random_start():
-    # 目标区域在一个圆形的范围内
-    x_center = 1.5 * L
-    y_center = 0.5 * L
-
-    # 生成随机角度
-    #angle = random.uniform(0, 2 * pi)
-    angle = 0.25 * pi
-
-
-    # 生成随机半径
-    # radius = random.uniform(0, 0.25 * L)
-    radius = 0.1 * L
-
-    # 将极坐标转换为直角坐标
-    x = x_center + radius * cos(angle)
-    y = y_center + radius * sin(angle)
-    startpoint = [x, y]
-    return startpoint
-
-
-def random_target():
-    # 目标区域在一个圆形的范围内
-    x_center = 0.5 * L
-    y_center = 0.5 * L
-
-    # 生成随机角度
-    # angle = random.uniform(0, 2 * pi)
-    angle = 0.25 * pi
-
-    # 生成随机半径
-    # radius = random.uniform(0, 0.25 * L)
-    radius = 0.1 * L
-
-    # 将极坐标转换为直角坐标
-    x = x_center + radius * cos(angle)
-    y = y_center + radius * sin(angle)
-    startpoint = [x, y]
-    return startpoint
-
-
-# 动力学函数
-def f_1(pos_x, t):
-    """
-
-    param pos_x:          position x
-    param t:        simulation time
-
-    return: f(x,t)
-    """
-    out_put = epsilon * sin(omega * t) * pos_x ** 2 + pos_x - 2 * epsilon * sin(omega * t) * pos_x
-    return out_put
-
-
-def psi(pos_x, pos_y, t):
-    """
-
-    param pos_x:          position x
-    param pos_y:          position y
-    param t:        simulation time
-
-    return: ψ(x,y,t)
-    """
-
-    out_put = A * sin(pi * f_1(pos_x, t)) * sin(pi * pos_y)
-    return out_put
-
-
-def U_flow_x(pos_x, pos_y, t):
-    """
-
-    param pos_x:          position x
-    param pos_y:          position y
-    param t:        simulation time
-
-    return: vflow_x
-    """
-
-    out_put = -pi * A * sin(pi * f_1(pos_x, t)) * cos(pi * pos_y)
-    return out_put
-
-
-def U_flow_y(pos_x, pos_y, t):
-    """
-
-    param pos_x:          position x
-    param pos_y:          position y
-    param t:        simulation time
-
-    return: vflow_y
-    """
-
-    out_put = pi * A * cos(pi * f_1(pos_x, t)) * sin(pi * pos_y) * (
-            2 * epsilon * sin(omega * t) * pos_x
-            + 1 - 2 * epsilon * sin(omega * t))
-    return out_put
-
-
-def step(state, action, t):
-    pos_x = state[0]
-    pos_y = state[1]
-    flow_x = U_flow_x(pos_x, pos_y, t)
-    flow_y = U_flow_y(pos_x, pos_y, t)
-    dx = (U_swim * cos(action) + flow_x) * dt
-    dy = (U_swim * sin(action) + flow_y) * dt
-    new_x = pos_x + dx
-    new_y = pos_y + dy
-    return [new_x, new_y]
+env = Double_gyre_Flow(U_swim=U_swim, L=L, epsilon=epsilon, dt=dt)
 
 
 # RRT过程
@@ -270,17 +162,17 @@ class RRT:
         d, theta = self.calc_distance_and_angle(from_node, to_node)
         new_action = theta
         flow_x, flow_y = self.velocity_function(from_node.x, from_node.y, t)
-        # dx = (U_swim * cos(theta) + flow_x) * (delta_t + to_node.t - from_node.t)
-        # dy = (U_swim * sin(theta) + flow_y) * (delta_t + to_node.t - from_node.t)
         dx = (U_swim * cos(theta) + flow_x) * delta_t
         dy = (U_swim * sin(theta) + flow_y) * delta_t
         new_x = from_node.x + dx
         new_y = from_node.y + dy
         return new_x, new_y, new_action
 
-    def velocity_function(self, x, y, t):
-        v_x = U_flow_x(x, y, t)
-        v_y = U_flow_y(x, y, t)
+    @staticmethod
+    def velocity_function(x, y, t):
+        v_x = env.U_flow_x(x, y, t)
+        v_y = env.U_flow_y(x, y, t)
+        # v_x, v_y = env.get_speed([x, y, t])
         return v_x, v_y
 
     # generate_final_course方法生成从起点到终点的路径
@@ -397,8 +289,8 @@ class RRT:
 
 
 def main():
-    start = random_start()
-    goal = random_target()
+    start = env.get_start(center=[0.5 * L, 1.5 * L], radius=0, angle=0)
+    goal = env.get_target(center=[0.5 * L, 0.5 * L], radius=0, angle=0)
     goal_range = [(goal, 1.0 / 50)]
     map_dimensions = [0, 3]
 
@@ -416,7 +308,6 @@ def main():
     path_dir = './RRT_output/trajectory.csv'
     img_dir = './RRT_output/trajectory.png'
 
-    """""""""
     len_old = 40
     for _ in range(20):
         rrt = RRT(start, goal, map_dimensions, dt, expand_distance=L / 50, obstacle_list=obstacle_list)
@@ -436,8 +327,6 @@ def main():
                            save_dir=img_dir)
 
             len_old = len_new
-    
-    """
 
     """""""""
     rrt = RRT(start, goal, map_dimensions, dt, expand_distance=L / 50, obstacle_list=obstacle_list)

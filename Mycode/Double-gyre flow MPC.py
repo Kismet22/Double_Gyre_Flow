@@ -3,9 +3,11 @@ import numpy as np
 import time
 from math import *
 import matplotlib.pyplot as plt
+import random
 import casadi.tools as ca_tools
 import csv
 import pandas as pd
+from FlowEnvironment import Double_gyre_Flow
 
 # 常数设置
 U_swim = 0.9
@@ -14,82 +16,51 @@ epsilon = 0.3
 L = 1
 target_center = (0.5 * L, 0.5 * L)
 start_center = (1.5 * L, 0.5 * L)
-D_range = 0.5 * L
-
+dt = 0.1
 omega = 20 * pi * U_swim / (3 * L)
-D = 1
+R = 0.25 * L
+
+
+def random_start():
+    # 目标区域在一个圆形的范围内
+    x_center = 1.5 * L
+    y_center = 0.5 * L
+
+    # 生成随机角度
+    angle = random.uniform(0, 2 * pi)
+
+    # 生成随机半径
+    radius = random.uniform(0, 0.25 * L)
+    # radius = 0
+
+    # 将极坐标转换为直角坐标
+    x_start = x_center + radius * cos(angle)
+    y_start = y_center + radius * sin(angle)
+    startpoint = [x_start, y_start]
+    return startpoint
+
+
+def random_target():
+    # 目标区域在一个圆形的范围内
+    x_center = 0.5 * L
+    y_center = 0.5 * L
+
+    # 生成随机角度
+    angle = random.uniform(0, 2 * pi)
+
+    # 生成随机半径
+    radius = random.uniform(0, 0.25 * L)
+    # radius = 0
+
+    # 将极坐标转换为直角坐标
+    x_target = x_center + radius * cos(angle)
+    y_target = y_center + radius * sin(angle)
+    startpoint = [x_target, y_target]
+    return startpoint
 
 
 # 动力学函数
-def f_1(pos_x, t):
-    """
-
-    param pos_x:          position x
-    param t:        simulation time
-
-    return: f(x,t)
-    """
-    out_put = epsilon * ca.sin(omega * t) * pos_x ** 2 + pos_x - 2 * epsilon * ca.sin(omega * t) * pos_x
-    return out_put
-
-
-def psi(pos_x, pos_y, t):
-    """
-
-    param pos_x:          position x
-    param pos_y:          position y
-    param t:        simulation time
-
-    return: ψ(x,y,t)
-    """
-
-    out_put = A * ca.sin(ca.pi * f_1(pos_x, t)) * ca.sin(ca.pi * pos_y)
-    return out_put
-
-
-def U_flow_x(pos_x, pos_y, t):
-    """
-
-    param pos_x:          position x
-    param pos_y:          position y
-    param t:        simulation time
-
-    return: vflow_x
-    """
-
-    out_put = -ca.pi * A * ca.sin(ca.pi * f_1(pos_x, t)) * ca.cos(ca.pi * pos_y)
-    return out_put
-
-
-def U_flow_y(pos_x, pos_y, t):
-    """
-
-    param pos_x:          position x
-    param pos_y:          position y
-    param t:        simulation time
-
-    return: vflow_y
-    """
-
-    out_put = ca.pi * A * ca.cos(ca.pi * f_1(pos_x, t)) * ca.sin(ca.pi * pos_y) * (
-            2 * epsilon * ca.sin(omega * t) * pos_x
-            + 1 - 2 * epsilon * ca.sin(omega * t))
-    return out_put
-
-
-
-
-def agent_dynamics_withtime(state_init, control_init):
-    action = control_init
-    pos_x, pos_y, pos_t = state_init[0], state_init[1], state_init[2]
-    v_flow_x = U_flow_x(pos_x, pos_y, pos_t)
-    v_flow_y = U_flow_y(pos_x, pos_y, pos_t)
-
-    delta_pos_x = U_swim * ca.cos(action) + v_flow_x
-    delta_pos_y = U_swim * ca.sin(action) + v_flow_y
-    delta_t = 1
-    return ca.vertcat(delta_pos_x, delta_pos_y, delta_t)
-
+env = Double_gyre_Flow(U_swim=U_swim, epsilon=epsilon, L=L, dt=dt, mode='casadi')
 
 
 def shift_movement(delta_t, t_in, x_in, u, function):
@@ -107,7 +78,7 @@ def shift_movement(delta_t, t_in, x_in, u, function):
 #####################
 # 环境变量声明
 dt = 0.1  # （模拟的）系统采样时间【秒】
-N = 10  # 需要预测的步长【超参数】
+N = 5  # 需要预测的步长【超参数】
 t0 = 0  # 初始时间
 # tf = dt * 150  # 结束时间
 #####################
@@ -127,7 +98,6 @@ for i in range(len(data)):
     x0 = x_new
 """
 
-
 # 根据数学模型建模
 # 1 系统状态
 x = ca.SX.sym('x')  # x坐标
@@ -145,7 +115,8 @@ n_controls = controls.size()[0]  # 控制向量尺寸
 
 # 3 运动学模型
 # 定义右手函数
-rhs = agent_dynamics_withtime(states, controls)
+# rhs = agent_dynamics_withtime(states, controls)
+rhs = env.agent_dynamics_withtime(states, controls)
 
 # 利用CasADi构建一个函数
 f = ca.Function('f', [states, controls], [rhs], ['input_state', 'control_input'], ['rhs'])
@@ -201,14 +172,15 @@ for i in range(N + 1):
 # .reshape(U, -1, 1):-1表示该维度由另一位维度推演而来, 1 一列
 nlp_prob = {'f': obj, 'x': ca.reshape(U, -1, 1), 'p': P, 'g': ca.vertcat(*g)}
 
-# ipot设置:
+# ipopt设置:
 # ipopt.max_iter: 最大迭代次数
 # ipopt.print_level: 输出信息的详细级别，0 表示关闭输出
 # print_time: 控制是否输出求解时间
-# ipopt.acceptable_tol: 接受的目标函数值的容忍度
+# ipopt.acceptable_tol: KKT条件变化的容忍度
 # ipopt.acceptable_obj_change_tol: 接受的目标函数变化的容忍度
 opts_setting = {'ipopt.max_iter': 1000, 'ipopt.print_level': 0, 'print_time': 0, 'ipopt.acceptable_tol': 1e-8,
                 'ipopt.acceptable_obj_change_tol': 1e-8}
+
 # 最终目标，获得求解器:
 # solver' 是求解器的名称
 # ipopt' 指定了所使用的求解器为 IPOPT
@@ -229,7 +201,7 @@ for _ in range(N):
 # 仿真条件和相关变量
 t0 = 0.0  # 仿真时间
 x0 = np.array([1.5, 0.5, 0.0]).reshape(-1, 1)  # 初始始状态
-xs = np.array([0.5, 0.5, np.nan]).reshape(-1, 1)  # 末状态
+xs = np.array([0.5, 0.75, np.nan]).reshape(-1, 1)  # 末状态
 u0 = np.array([0.0] * N).reshape(-1, n_controls)  # 系统初始控制状态，为了统一本例中所有numpy有关,N行,n_controls列,每个值都是0
 # 变量都会定义成（N,状态数）的形式方便索引和print
 x_c = []  # 存储系统的状态
@@ -243,8 +215,8 @@ index_t = []  # 存储时间戳，以便计算每一步求解的时间
 # 6 开始仿真
 mpciter = 0  # 迭代计数器
 start_time = time.time()  # 获取开始仿真时间
-# 终止条件为目标的欧式距离小于D/6或者仿真超时
-while np.linalg.norm(x0[:2] - xs[:2]) > D / 20 and mpciter - sim_time / dt < 0.0:
+# 终止条件为目标的欧式距离小于D/50或者仿真超时
+while np.linalg.norm(x0[:2] - xs[:2]) > L / 50 and mpciter - sim_time / dt < 0.0:
     print("'''''''''''''''''''''''''")
     print("mpc_iter", mpciter)
     print("控制器输入", u0)
@@ -297,4 +269,3 @@ plt.ylabel('Y Position')
 plt.legend()
 plt.grid()
 plt.show()
-

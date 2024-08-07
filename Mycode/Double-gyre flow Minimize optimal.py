@@ -19,9 +19,7 @@ L = 1
 target_center = (0.5 * L, 0.5 * L)
 start_center = (1.5 * L, 0.5 * L)
 D_range = 0.5 * L
-
 omega = 20 * pi * U_swim / (3 * L)
-D = 1
 dt = 0.1
 
 env = Double_gyre_Flow(U_swim=U_swim, L=L, epsilon=epsilon, dt=dt)
@@ -30,25 +28,32 @@ env = Double_gyre_Flow(U_swim=U_swim, L=L, epsilon=epsilon, dt=dt)
 # 1、确保智能体到达终点范围
 # 2、最小化时间步数
 
-
 # 初始状态和目标状态
 x0 = np.array([0.5 * L, 1.5 * L, 0])
-xf = np.array([0.25 * L, 0.5 * L, 1.2])
+xf = np.array([0.5 * L, 0.5 * L, 1.2])
 
 # 最终状态权重矩阵
 # @ 矩阵乘法
-Q_f = np.array([[100, 0, 0], [0, 100, 0], [0, 0, 300]])
+Q_smooth = np.array([[5, 0, 0], [0, 5, 0], [0, 0, 10]])
+Q_target = np.array([[50, 0, 0], [0, 50, 0], [0, 0, 0]])
+Q_to_target = np.array([[1, 0, 0], [0, 1, 0], [0, 0, 0]])
 
-N = 16
+N = 50
 
 
 # 定义目标函数
 def objective(U):
     U = U.reshape(N, -1)
-    x = x0
-    for k in range(N):
-        x = env.agent_dynamics_withtime(x, U[k])
-    cost = (x - xf).T @ Q_f @ (x - xf)
+    x_old = x0
+    cost = 0
+    for number in range(N):
+        x_new = env.agent_dynamics_withtime(x_old, U[number])
+        cost += (x_new - np.array(x_old)).T @ Q_smooth @ (x_new - np.array(x_old))
+        x_old = x_new
+        distance_to_target = (x_old - xf).T @ Q_to_target @ (x_old - xf)
+        if distance_to_target <= (L / 50) ** 2:
+            break
+    cost += (x_old - xf).T @ Q_target @ (x_old - xf)
     return cost
 
 
@@ -89,7 +94,7 @@ for i in range(len(data)):
 print(x0)
 """
 
-for i in range(N):
+for i in range(min(len(data), N)):
     initial_guess[i] = data[i]
 print("RRT控制输入", initial_guess)
 
@@ -113,9 +118,12 @@ U_opt = result.x.reshape(N, -1)
 for k in range(N):
     x = env.agent_dynamics_withtime(x, U_opt[k])
     trajectory.append(x)
+    if env.distance_to_goal(trajectory[-1], xf) <= L / 50:
+        break
 
 state_trajectory = np.array(trajectory)
 print("末位置", trajectory[-1])
+print("时间步长", k)
 print(f'距离差:{env.distance_to_goal(trajectory[-1], xf)};限制距离:{L / 50}')
 
 plt.plot(state_trajectory[:, 0], state_trajectory[:, 1], marker='o')

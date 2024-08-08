@@ -2,10 +2,8 @@ import casadi as ca
 import numpy as np
 import time
 from math import *
-import matplotlib.pyplot as plt
 from FlowEnvironment import Double_gyre_Flow
 from Real_environment import DoubleGyreEnvironment
-
 
 # 常数设置
 dt = 0.01
@@ -105,15 +103,19 @@ class MPCController:
         # 获得求解器
         self.solver = ca.nlpsol('solver', 'ipopt', nlp_prob, opts_setting)
 
-    def shift_movement(self, delta_t, t_in, x_in, u):
-        # 状态更新函数
+    ######################### MPC内置的环境更新模拟器 #########################
+    def shift_movement(self, delta_t, time_in, x_in, u):
+        # 内置环境更新模拟器，用于模拟真实环境的更新
+        # 当存在真实环境的更新时，可以不调用
         f_value = self.f(x_in, u[:, 0])  # 实际执行预测序列的第一步
         st = x_in + delta_t * f_value  # 状态更新
-        t_move = t_in + delta_t  # 时间更新(实际并不需要)，时间已经包含在状态中被更新
+        time_move = time_in + delta_t  # 时间更新(实际并不需要)，时间已经包含在状态中被更新
         u_end = ca.horzcat(u[:, 1:], u[:, -1])  # 将预测的序列用于下一次的更新控制
         # 具体来说，去掉已经执行的第一步动作，复制第N步(最后一步)的执行动作
         # 在末尾添加上（复制）最后一列控制输入
-        return t_move, st, u_end.T
+        return time_move, st, u_end.T
+
+    #################################################################
 
     def solve_mpc(self, start_state, target_state):
         # 初始化优化目标变量(控制变量)
@@ -125,7 +127,7 @@ class MPCController:
         sol = self.solver(x0=ca.reshape(init_control, -1, 1), p=c_p, lbx=self.lbx, ubx=self.ubx)  # 当前阶段N步优化器
         # sol['f']输出当前预测的优化目标值
         u_opt = ca.reshape(sol['x'], self.n_controls, self.N)  # 当前阶段N步的动作策略
-        s_opt = mpc.ff(u_opt, c_p)  # 当前阶段的N步预测结果
+        s_opt = self.ff(u_opt, c_p)  # 当前阶段的N步预测结果
         return u_opt, sol['f'], s_opt
 
 
@@ -137,23 +139,14 @@ states = ca.vertcat(x, y, t)
 theta = ca.SX.sym('theta')
 actions = ca.vertcat(theta)
 
-"""""""""
-# 目前最好的矩阵设计
-# 位置惩罚矩阵
+# 状态目标矩阵
 Q = np.zeros((3, 3))  # 全零 2x2 矩阵，用于惩罚位置
-Q[:2, :2] = np.array([[10.0, 0.0],  # 对状态矩阵的前两个进行惩罚
+# 终点目标
+Q[:2, :2] = np.array([[10.0, 0.0],
                       [0.0, 10.0]])
+# 时间目标
 Q[2][2] = 10.0
-# 时间惩罚矩阵
-R = np.array([0.0])
-"""
-
-# 位置惩罚矩阵
-Q = np.zeros((3, 3))  # 全零 2x2 矩阵，用于惩罚位置
-Q[:2, :2] = np.array([[10.0, 0.0],  # 对状态矩阵的前两个进行惩罚
-                      [0.0, 10.0]])
-Q[2][2] = 10.0
-# 时间惩罚矩阵
+# 动作目标
 R = np.array([0.0])
 
 N = 50  # 每个状态进行预测的步数
@@ -165,20 +158,23 @@ for _ in range(N):
     lbx.append(-control_max)
     ubx.append(control_max)
 
-
-
-x0 = np.array([1.5, 0.5, 0.0]).reshape(-1, 1)  # 初始始状态
-x_start = x0
-xs = np.array([0.5, 0.5, 0.0]).reshape(-1, 1)  # 末状态
-
-env = Double_gyre_Flow(U_swim=U_swim, epsilon=epsilon, L=L, dt=dt, mode='casadi')
+env = DoubleGyreEnvironment(render_mode='human')
+env.reset()
+env_1 = Double_gyre_Flow(U_swim=U_swim, epsilon=epsilon, L=L, dt=dt, mode='casadi')
 mpc = MPCController(delta_t=dt, p_n_steps=N, states_object=Q, actions_object=R,
                     state_matrix=states, action_matrix=actions,
-                    agent_dynamics_function=env.agent_dynamics_withtime,
+                    agent_dynamics_function=env_1.agent_dynamics_withtime,
                     low_limit=lbx, high_limit=ubx)
 
 # 仿真条件和相关变量
-t0 = 0.2  # 仿真时间
+t0 = env.t0  # 仿真开始时间
+print("MPC开始时间", t0)
+x_env_start = env.agent_pos
+x0 = np.append(x_env_start, t0).reshape(-1, 1)  # 起点状态
+print("智能体起点状态", x0)
+x_env_target = env.target
+xs = np.append(x_env_target, 0.0).reshape(-1, 1)  # 末状态
+print("智能体目标状态", xs)
 n_controls = 1
 u0 = np.array([0.0] * N).reshape(-1, n_controls)  # 系统初始控制状态，为了统一本例中所有numpy有关,N行,n_controls列,每个值都是0
 x_c = []  # 存储每一次的N步序列预测结果
@@ -192,26 +188,29 @@ index_t = []  # 存储时间戳，以便计算每一步求解的时间
 # 6 开始仿真
 mpciter = 0  # 迭代计数器
 start_time = time.time()  # 获取开始仿真时间
+terminated = False
+truncated = False
 # 终止条件为目标的欧式距离小于D/50或者仿真超时
-while np.linalg.norm(x0[:2] - xs[:2]) > L / 50 and mpciter - sim_time / dt < 0.0:
+while not (terminated or truncated):
     print("'''''''''''''''''''''''''")
     print("时间步", mpciter)
     print("控制器输入", u0)
     # 计算结果并且
     t_ = time.time()
     u_sol, res, ff_value = mpc.solve_mpc(x0, xs)
-    print("当前优化目标值:", res)
-    print("后N步预测结果:", ff_value)
+    print(f'当前优化目标值:{res}')
+    print(f'后{N}步预测结果:{ff_value}')
     index_t.append(time.time() - t_)
     # 存储结果
     x_c.append(ff_value)
     u_c.append(u_sol[:, 0])
     t_c.append(t0)
     # 根据数学模型和MPC计算的结果移动并且准备好下一个循环的初始化目标
-    # 实际上，u0并没有参与到MPC的更新预测环节中，作为N步序列可以起到参考的作用
-    # shift_movement可以看作真实的状态转移情况
-    t0, x0, u0 = mpc.shift_movement(dt, t0, x0, u_sol)
+    # u_sol的后N-1步并没有参与到MPC的更新预测环节中，作为N步序列可以起到参考的作用
+    # 真实的状态转移
+    _, _, terminated, truncated, _ = env.step(u_c[-1])
     # 存储位置
+    x0 = np.append(env.agent_pos, t0 + env.t_step * dt).reshape(-1, 1)
     x0 = ca.reshape(x0, -1, 1)
     xx.append(x0.full())
     position_record.append([x0.full()[0], x0.full()[1]])
@@ -219,35 +218,3 @@ while np.linalg.norm(x0[:2] - xs[:2]) > L / 50 and mpciter - sim_time / dt < 0.0
     print("当前状态:", x0.full())
     # 计数器+1
     mpciter = mpciter + 1
-
-if __name__ == '__main__':
-    env = DoubleGyreEnvironment(_init_t=t0, render_mode='human')
-    env.reset()
-    terminated = False
-    truncated = False
-    for i in range(len(u_c)):
-        action = u_c[i]
-        obs, reward, terminated, truncated, _ = env.step(action)
-
-
-"""""""""
-plt.figure(figsize=(10, 6))
-
-# 绘制位置记录
-position_record = np.array(position_record)
-plt.plot(position_record[:, 0], position_record[:, 1], 'bo-', label='Trajectory')
-
-# 绘制目标位置
-plt.plot(x_start[0], x_start[1], 'ro', label='Start Position')
-plt.plot(xs[0], xs[1], 'go', label='Target Position')
-circle = plt.Circle((xs[0], xs[1]), radius=L / 50, color='g', fill=False, linestyle='--', linewidth=1.5)
-plt.gca().add_patch(circle)
-
-# 添加标题和标签
-plt.title('System State Trajectories')
-plt.xlabel('X Position')
-plt.ylabel('Y Position')
-plt.legend()
-plt.grid()
-plt.show()
-"""

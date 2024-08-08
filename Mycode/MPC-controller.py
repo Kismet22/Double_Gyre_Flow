@@ -4,9 +4,11 @@ import time
 from math import *
 import matplotlib.pyplot as plt
 from FlowEnvironment import Double_gyre_Flow
+from Real_environment import DoubleGyreEnvironment
+
 
 # 常数设置
-dt = 0.1
+dt = 0.01
 U_swim = 0.9
 epsilon = 0.3
 A = 2 * U_swim / 3
@@ -63,14 +65,14 @@ class MPCController:
         X[:, 0] = P[:self.n_states]
 
         # 剩余N状态约束条件
-        for i in range(self.N):
-            delta_X = self.f(X[:, i], U[:, i])
-            X[:, i + 1] = X[:, i] + delta_X * self.dt
+        for i_step in range(self.N):
+            delta_X = self.f(X[:, i_step], U[:, i_step])
+            X[:, i_step + 1] = X[:, i_step] + delta_X * self.dt
 
         # 获得输入（控制输入，参数）和输出（系统状态）之间关系的函数
         self.ff = ca.Function('ff', [U, P], [X], ['input_U', 'target_state'], ['horizon_states'])
 
-        # 优化目标
+        ######################### 定义优化目标参数 #########################
         obj = 0
         """""""""
         # 这是目前效果最好的目标函数设置
@@ -79,13 +81,15 @@ class MPCController:
             obj = obj + ca.mtimes([(X[:, i] - P[self.n_states:]).T, self.Q, X[:, i] - P[self.n_states:]])
         """
 
-        # 状态约束
-        for i in range(self.N):
-            obj = obj + ca.mtimes([(X[:, i] - P[self.n_states:]).T, self.Q, X[:, i] - P[self.n_states:]])
+        # 状态约束,使智能体靠近目标终点
+        for i_step in range(self.N):
+            obj = obj + ca.mtimes([(X[:, i_step] - P[self.n_states:]).T, self.Q, X[:, i_step] - P[self.n_states:]])
 
-        # 动作约束，追求平滑性
-        for i in range(1, self.N):
-            obj += ca.mtimes([(U[:, i] - U[:, i - 1]).T, self.R, (U[:, i] - U[:, i - 1])])
+        # 动作约束，减少动作与动作之间输出的变化幅度
+        for i_step in range(1, self.N):
+            obj += ca.mtimes([(U[:, i_step] - U[:, i_step - 1]).T, self.R, (U[:, i_step] - U[:, i_step - 1])])
+
+        #################################################################
 
         # 约束条件定义
         g = []
@@ -152,7 +156,7 @@ Q[2][2] = 10.0
 # 时间惩罚矩阵
 R = np.array([0.0])
 
-N = 20  # 每个状态进行预测的步数
+N = 50  # 每个状态进行预测的步数
 control_max = ca.pi
 lbx = []  # 最低约束条件
 ubx = []  # 最高约束条件
@@ -161,7 +165,9 @@ for _ in range(N):
     lbx.append(-control_max)
     ubx.append(control_max)
 
-x0 = np.array([0.5, 1.5, 0.0]).reshape(-1, 1)  # 初始始状态
+
+
+x0 = np.array([1.5, 0.5, 0.0]).reshape(-1, 1)  # 初始始状态
 x_start = x0
 xs = np.array([0.5, 0.5, 0.0]).reshape(-1, 1)  # 末状态
 
@@ -172,7 +178,7 @@ mpc = MPCController(delta_t=dt, p_n_steps=N, states_object=Q, actions_object=R,
                     low_limit=lbx, high_limit=ubx)
 
 # 仿真条件和相关变量
-t0 = 0.0  # 仿真时间
+t0 = 0.2  # 仿真时间
 n_controls = 1
 u0 = np.array([0.0] * N).reshape(-1, n_controls)  # 系统初始控制状态，为了统一本例中所有numpy有关,N行,n_controls列,每个值都是0
 x_c = []  # 存储每一次的N步序列预测结果
@@ -180,7 +186,7 @@ position_record = [[x0[0], x0[1]]]  # 存储真实的运动轨迹序列
 u_c = []  # 存储真实的控制序列
 t_c = []  # 保存时间
 xx = []  # 存储真实的状态序列
-sim_time = 20  # 仿真时长
+sim_time = t0 + 4  # 仿真时长
 index_t = []  # 存储时间戳，以便计算每一步求解的时间
 
 # 6 开始仿真
@@ -203,6 +209,7 @@ while np.linalg.norm(x0[:2] - xs[:2]) > L / 50 and mpciter - sim_time / dt < 0.0
     t_c.append(t0)
     # 根据数学模型和MPC计算的结果移动并且准备好下一个循环的初始化目标
     # 实际上，u0并没有参与到MPC的更新预测环节中，作为N步序列可以起到参考的作用
+    # shift_movement可以看作真实的状态转移情况
     t0, x0, u0 = mpc.shift_movement(dt, t0, x0, u_sol)
     # 存储位置
     x0 = ca.reshape(x0, -1, 1)
@@ -213,6 +220,17 @@ while np.linalg.norm(x0[:2] - xs[:2]) > L / 50 and mpciter - sim_time / dt < 0.0
     # 计数器+1
     mpciter = mpciter + 1
 
+if __name__ == '__main__':
+    env = DoubleGyreEnvironment(_init_t=t0, render_mode='human')
+    env.reset()
+    terminated = False
+    truncated = False
+    for i in range(len(u_c)):
+        action = u_c[i]
+        obs, reward, terminated, truncated, _ = env.step(action)
+
+
+"""""""""
 plt.figure(figsize=(10, 6))
 
 # 绘制位置记录
@@ -232,3 +250,4 @@ plt.ylabel('Y Position')
 plt.legend()
 plt.grid()
 plt.show()
+"""

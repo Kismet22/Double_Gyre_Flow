@@ -8,13 +8,13 @@ import math
 from termcolor import colored
 
 
-
 class DoubleGyreEnvironment(gym.Env):
     metadata = {"render_modes": ["human", "rgb_array", None], "render_fps": 4}
 
     environment_name = "DoubleGyre"
 
-    def __init__(self, _init_t=None, field_file_path='', render_mode=None, is_fixed_start_and_target=True, seed=None, lamb=0.02,
+    def __init__(self, _init_t=None, field_file_path='', render_mode=None, is_fixed_start_and_target=True, seed=None,
+                 lamb=0.02,
                  rho=10):
         """
         size: size (grid_height and grid_width) of canvas
@@ -31,6 +31,7 @@ class DoubleGyreEnvironment(gym.Env):
         self.width = 201
         self.height = 101
         if _init_t:
+            print("Have _init_t")
             self.t_init = _init_t
         else:
             self.t_init = None
@@ -157,9 +158,12 @@ class DoubleGyreEnvironment(gym.Env):
         super().reset(seed=seed)
         # 重置时间
         if self.t_init:
-            self.t0 = 0
+            # print("有初始化时间")
+            self.t0 = self.t_init
         else:
             self.t0 = np.random.uniform(0, 0.33)
+            # self.t0 = 0
+        print("初始化时间", self.t0)
         self.t_step = int(self.t0 / self.dt)
         # 重置位置
         if not self.is_fixed_start_and_target:

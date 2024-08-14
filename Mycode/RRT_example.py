@@ -1,5 +1,21 @@
+import matplotlib.pyplot as plt
 import random
+import csv
 from math import *
+from FlowEnvironment import Double_gyre_Flow
+
+# 常数设置
+U_swim = 0.9
+A = 2 * U_swim / 3
+epsilon = 0.3
+L = 1
+target_center = (0.5 * L, 0.5 * L)
+start_center = (1.5 * L, 0.5 * L)
+D_range = 0.5 * L
+omega = 20 * pi * U_swim / (3 * L)
+dt = 0.1
+
+env_in = Double_gyre_Flow(U_swim=U_swim, L=L, epsilon=epsilon, dt=dt)
 
 
 # RRT过程
@@ -43,7 +59,7 @@ class RRT:
 
     def plan(self):
         # 在最大迭代次数内
-        t = self.start.t  # 初始化时间
+        t = 0  # 初始化时间
         for i in range(self.max_iter):
             # 生成随机节点
             rnd_node = self.get_random_node(t)
@@ -53,7 +69,7 @@ class RRT:
             # 生成从现有节点到随机节点的新节点
             if nearest_node.t == t:
                 # print("不需要多步模拟")
-                new_node = self.steer(nearest_node, rnd_node, nearest_node.t)
+                new_node = self.steer(nearest_node, rnd_node, self.time_step, nearest_node.t)
                 # 不与障碍物碰撞，加入节点list中
                 if self.check_collision(new_node, self.obstacle_list):
                     self.node_list.append(new_node)
@@ -63,7 +79,7 @@ class RRT:
                         return self.generate_final_course(len(self.node_list) - 1)
 
             else:
-                new_node = self.steer(nearest_node, rnd_node, nearest_node.t)
+                new_node = self.steer(nearest_node, rnd_node, self.time_step, nearest_node.t)
                 # 不与障碍物碰撞，加入节点list中
                 if self.check_collision(new_node, self.obstacle_list):
                     self.node_list.append(new_node)
@@ -71,34 +87,41 @@ class RRT:
                     if self.distance_to_goal(new_node.x, new_node.y) <= self.expand_distance:
                         print("FIND PATH")
                         return self.generate_final_course(len(self.node_list) - 1)
-                while abs(rnd_node.t - new_node.t) > 0.1 * self.env.dt:
+                time_step = round((t - nearest_node.t) / self.time_step)  # 四舍五入向上取整
+                for _ in range(time_step):
                     current_time = new_node.t
-                    new_node = self.steer(new_node, rnd_node, current_time)
+                    new_node = self.steer(new_node, rnd_node, self.time_step, current_time)
                     if self.check_collision(new_node, self.obstacle_list):
                         self.node_list.append(new_node)
                         # 如果new_node离目标足够近，尝试直接连接到目标，并检查是否碰撞
                         if self.distance_to_goal(new_node.x, new_node.y) <= self.expand_distance:
                             print("FIND PATH")
                             return self.generate_final_course(len(self.node_list) - 1)
-            t = new_node.t
+            t = round(t + self.time_step, 1)  # 更新时间并四舍五入保留一位小数
         print("FAIL TO FIND PATH")
         return None, None, None
 
     # steer方法从from_node向to_node生成一个新的节点new_node
-    def steer(self, from_node, to_node, t):
-        new_node = Node(from_node.x, from_node.y, from_node.t, 0)
-        new_node.x, new_node.y, new_node.t, new_node.at = self.nonlinear_motion(from_node, to_node, t)
+    def steer(self, from_node, to_node, time_step, t):
+        new_node = Node(from_node.x, from_node.y, round(t + self.time_step, 1), 0)
+        new_node.x, new_node.y, new_node.at = self.nonlinear_motion(from_node, to_node, time_step, t)
         new_node.parent = from_node
         return new_node
 
-    def nonlinear_motion(self, from_node, to_node, t):
+    def nonlinear_motion(self, from_node, to_node, delta_t, t):
         d, theta = self.calc_distance_and_angle(from_node, to_node)
         new_action = theta
-        new_state = self.env.agent_dynamics_withtime([from_node.x, from_node.y, t], theta)
-        new_x = new_state[0]
-        new_y = new_state[1]
-        new_t = new_state[2]
-        return new_x, new_y, new_t, new_action
+        flow_x, flow_y = self.velocity_function(from_node.x, from_node.y, t)
+        dx = (U_swim * cos(theta) + flow_x) * delta_t
+        dy = (U_swim * sin(theta) + flow_y) * delta_t
+        new_x = from_node.x + dx
+        new_y = from_node.y + dy
+        return new_x, new_y, new_action
+
+    def velocity_function(self, x, y, t):
+        v_x = self.env.U_flow_x(x, y, t)
+        v_y = self.env.U_flow_y(x, y, t)
+        return v_x, v_y
 
     # generate_final_course方法生成从起点到终点的路径
     # 从终点开始，通过父节点指针逐步回溯到起点，生成路径
@@ -150,7 +173,7 @@ class RRT:
 
     # 判断是否与障碍物发生碰撞
     # size为距离半径
-    def check_collision(self, node, obstaclelist):
+    def check_collision(self, node, obstacleList):
         """""""""
         for (ox, oy, size) in obstacleList:
             dx = ox - node.x
@@ -167,4 +190,113 @@ class RRT:
         dy = y - self.goal.y
         return hypot(dx, dy)
 
+    def draw_graph(self, all_path=False, final_path=None, time_list=None, obstacle_list=None,
+                   goal_range=None, save_dir=None):
+        # plot中文字体设置
+        plt.rcParams['font.sans-serif'] = ['SimHei']  # 用黑体显示中文
+        plt.rcParams['axes.unicode_minus'] = False  # 正常显示负号
+        fig, ax = plt.subplots()
+        if obstacle_list:
+            for (ox, oy, size) in obstacle_list:
+                circle = plt.Circle((ox, oy), size, color='b')
+                ax.add_artist(circle)
 
+        if goal_range:
+            for ((ox, oy), size) in goal_range:
+                circle = plt.Circle((ox, oy), size, color='gold')
+                ax.add_artist(circle)
+
+        if all_path:
+            for node in self.node_list:
+                if node.parent is not None:
+                    plt.plot([node.parent.x, node.x], [node.parent.y, node.y], "k--")
+
+        if final_path is None:
+            print("无法找到轨迹")
+
+        else:
+            print("轨迹寻找成功")
+            print("time_list", time_list)
+            path = final_path
+            for i in range(len(path) - 1):
+                plt.plot([path[i][0], path[i + 1][0]], [path[i][1], path[i + 1][1]], "r-")
+
+        plt.plot(self.goal.x, self.goal.y, "gx")
+        for (ox, oy, size) in self.obstacle_list:
+            plt.plot(ox, oy, "ok", ms=30 * size)
+
+        plt.axis("equal")
+        plt.grid(True)
+        if save_dir:
+            plt.savefig(save_dir)
+
+        if not save_dir:
+            plt.show()
+
+
+def main():
+    start = env_in.get_start(center=[0.5 * L, 1.5 * L], radius=0, angle=0)
+    goal = env_in.get_target(center=[0.5 * L, 0.5 * L], radius=0, angle=0)
+    goal_range = [(goal, 1.0 / 50)]
+    map_dimensions = [0, 3]
+
+    """""""""
+    obstacle_list = [
+        (5, 5, 1),
+        (3, 6, 2),
+        (3, 8, 2),
+        (7, 5, 2),
+    ]
+    """
+    obstacle_list = []
+
+    action_dir = './RRT_output/actions.csv'
+    path_dir = './RRT_output/trajectory.csv'
+    img_dir = './RRT_output/trajectory.png'
+
+    len_old = 40
+    for _ in range(20):
+        rrt = RRT(start, goal, env_in, map_dimensions, expand_distance=L / 50, obstacle_list=obstacle_list)
+        path, time_list, action_list = rrt.plan()
+        len_new = len(action_list)
+        if len_new < len_old:
+            # 保存为CSV文件
+            with open(action_dir, 'w', newline='') as file:
+                writer = csv.writer(file)
+                writer.writerow(action_list)
+
+            with open(path_dir, 'w', newline='') as file:
+                writer = csv.writer(file)
+                writer.writerow(path)
+
+            rrt.draw_graph(all_path=True, final_path=path, time_list=time_list, goal_range=goal_range,
+                           save_dir=img_dir)
+
+            len_old = len_new
+
+    """""""""
+    rrt = RRT(start, goal, map_dimensions, dt, expand_distance=L / 50, obstacle_list=obstacle_list)
+    path, time_list, action_list = rrt.plan()
+    """
+
+    """""""""
+    df = pd.read_csv(action_dir, header=None, dtype=str)  # 读取为字符串类型
+    action_list = df.values.flatten().tolist()  # 将数据转换为一维列表
+    t = 0
+    path = [1.5, 0.5]
+    # 验证轨迹运动状态
+    for i in range(len(action_list)):
+        print("########################################")
+        # print(path[i + 1])
+        # print(step(path[i], action_list[i], time_list[i]))
+        print("action", float(action_list[i]))
+        new_path = step(path, float(action_list[i]), t)
+        print(new_path)
+        path = new_path
+        t = t + 0.1
+    # rrt.draw_graph(all_path=True, final_path=path, time_list=time_list, goal_range=goal_range)
+    """
+
+
+if __name__ == '__main__':
+    main()

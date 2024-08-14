@@ -98,7 +98,7 @@ class Double_gyre_Flow:
 
     @staticmethod
     def get_speed(state):
-        t_index = state[2]
+        t_index = int(state[2]/0.01)
         x_index = int((state[0] - X_grid[0, 0]) / (X_grid[1, 0] - X_grid[0, 0]))
         y_index = int((state[1] - Y_grid[0, 0]) / (Y_grid[0, 1] - Y_grid[0, 0]))
         u = U_grid[t_index][x_index][y_index]

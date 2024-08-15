@@ -166,5 +166,3 @@ class RRT:
         dx = x - self.goal.x
         dy = y - self.goal.y
         return hypot(dx, dy)
-
-

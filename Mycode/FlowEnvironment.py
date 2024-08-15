@@ -1,8 +1,9 @@
-import numpy as np
+import torch
 import random
 import casadi as ca
 from math import *
 from scipy.io import loadmat
+from scipy.integrate import solve_ivp
 
 dir_name = './flow_field/DoubleGyre_grid_0.0to2.0of41_0.0to1.0of21.mat'
 data = loadmat(dir_name)
@@ -41,7 +42,7 @@ class Double_gyre_Flow:
     def f_1(self, pos_x, t):
         if self.mode == 'casadi' and ca is not None:
             return self.epsilon * ca.sin(self.omega * t) * pos_x ** 2 + pos_x - \
-                   2 * self.epsilon * ca.sin(self.omega * t) * pos_x
+                2 * self.epsilon * ca.sin(self.omega * t) * pos_x
         return self.epsilon * sin(self.omega * t) * pos_x ** 2 + pos_x - 2 * self.epsilon * sin(self.omega * t) * pos_x
 
     def psi(self, pos_x, pos_y, t):
@@ -89,6 +90,21 @@ class Double_gyre_Flow:
         new_t = t + self.dt
         return [new_x, new_y, new_t]
 
+    def agent_dynamics_withtime_ivp(self, state, action):
+        def dynamics(t, state):
+            pos_x, pos_y, pos_t = state[0], state[1], state[2]
+            flow_x = self.U_flow_x(pos_x, pos_y, t)
+            flow_y = self.U_flow_y(pos_x, pos_y, t)
+            dx = self.U_swim * cos(action) + flow_x
+            dy = self.U_swim * sin(action) + flow_y
+            dt = 1
+            return [dx, dy, dt]
+
+        # 用积分器更新状态
+        sol = solve_ivp(dynamics, [0, self.dt], state, max_step=self.dt / 10)
+        new_state = sol.y[:, -1]
+        return new_state
+
     @staticmethod
     def distance_to_goal(current, goal):
         # 计算两点之间的欧式距离
@@ -98,7 +114,7 @@ class Double_gyre_Flow:
 
     @staticmethod
     def get_speed(state):
-        t_index = int(state[2]/0.01)
+        t_index = int(state[2] / 0.01)
         x_index = int((state[0] - X_grid[0, 0]) / (X_grid[1, 0] - X_grid[0, 0]))
         y_index = int((state[1] - Y_grid[0, 0]) / (Y_grid[0, 1] - Y_grid[0, 0]))
         u = U_grid[t_index][x_index][y_index]

@@ -1,9 +1,12 @@
 import numpy as np
+import random
 from math import *
 from FlowEnvironment import Double_gyre_Flow
 from RRTController import RRT
 from scipy.optimize import minimize
+from Real_environment import DoubleGyreEnvironment
 import matplotlib.pyplot as plt
+
 
 # 设置中文字体
 plt.rcParams['font.sans-serif'] = ['SimHei']  # 用黑体显示中文
@@ -11,24 +14,20 @@ plt.rcParams['axes.unicode_minus'] = False  # 正常显示负号
 
 # 常数设置
 U_swim = 0.9
-A = 2 * U_swim / 3
 epsilon = 0.3
 L = 1
-target_center = (0.5 * L, 0.5 * L)
-start_center = (.5 * L, 1.5 * L)
-D_range = 0.5 * L
-omega = 20 * pi * U_swim / (3 * L)
-D = 1
 dt = 0.01
+A = 2 * U_swim / 3
+omega = 20 * pi * U_swim / (3 * L)
 
 env_in = Double_gyre_Flow(U_swim=U_swim, L=L, epsilon=epsilon, dt=dt)
 
 
 # 结合RRT控制器使用的最优化控制器
-
 class Optimal_Controller:
     def __init__(self, start, target, env, map_dimensions, u_min,
                  u_max, time_steps, rrt_times=50, use_rrt=False):
+
         self.start = start
         self.goal = target
         self.env = env
@@ -109,26 +108,38 @@ class Optimal_Controller:
             objective = self.object
             guess = initial_guess[:step]
             print("\n")
-            print(f"################## START TO OPTIMIZE WITH N_optimal={self.N_optimal} ##################")
+            print(f"################## START TO OPTIMIZE WITH MAX_STEPS={self.N_optimal} ##################")
             result = minimize(objective, guess, method='SLSQP', constraints=constraints)
             if result.success:
                 print("\n")
-                print(f"################## SUCCESS WITH N_optimal={self.N_optimal} ##################")
+                print(f"################## SUCCESS WITH MAX_STEPS={self.N_optimal} ##################")
                 out_put = result
             else:
                 break
         return out_put, self.rrt_result
 
 
-"""""""""
+env_real = DoubleGyreEnvironment(render_mode='human', _init_t=0.01, is_fixed_start_and_target=True)
+env_real.reset()
+# 仿真条件和相关变量
+t0 = env_real.t0  # 仿真开始时间
+print("开始时间", t0)
+x_env_start = env_real.agent_pos
+x0 = np.append(x_env_start, t0)  # 起点状态
+print("智能体起点状态", x0)
+x_env_target = env_real.target
+xf = np.append(x_env_target, 0)  # 末状态
+print("智能体目标状态", xf)
+
+"""""""""""
 r = random.uniform(0, 0.25 * L)
 angle = random.uniform(0, 2 * pi)
 t_in = np.random.uniform(0, 0.33)
 x0 = np.array([1.5 * L + r * cos(angle), 0.5 * L + r * sin(angle), t_in])
 xf = np.array([0.5 * L + r * cos(angle), 0.25 * L + r * sin(angle), 0])
+# x0 = np.array([1.5 * L, 0.5 * L, 0])
+# xf = np.array([0.75 * L, 0.5 * L, 0])
 """
-x0 = np.array([1.5 * L, 0.5 * L, 0])
-xf = np.array([0.75 * L, 0.5 * L, 0])
 
 u_min_in = np.array([-pi])
 u_max_in = np.array([pi])
@@ -137,20 +148,27 @@ controller = Optimal_Controller(start=x0, target=xf, env=env_in, map_dimensions=
                                 u_min=u_min_in, u_max=u_max_in, time_steps=N, rrt_times=10,
                                 use_rrt=True)
 
-
 optimal_result, rrt_result = controller.plan()
-rrt_path = controller.rrt_path
+#rrt_path = controller.rrt_path
 
 # 绘制轨迹
+U_opt = optimal_result.x
+optimal_iter = 0  # 迭代计数器
+terminated = False
+truncated = False
+while not (terminated or truncated) or optimal_iter < len(U_opt):
+    print("'''''''''''''''''''''''''")
+    print("时间步", optimal_iter)
+    print("控制器输入", U_opt[optimal_iter])
+    # 真实的状态转移
+    _, _, terminated, truncated, _ = env_real.step(U_opt[optimal_iter])
+    # 计数器+1
+    optimal_iter += 1
+
+"""""""""
 x = x0
 trajectory = [x]
-
-U_opt = optimal_result.x
 N_step = len(U_opt)
-"""""""""
-U_opt = rrt_result
-N_step = len(rrt_result)
-"""
 for k in range(N_step):
     x = env_in.agent_dynamics_withtime(x, U_opt[k], mode='math')
     trajectory.append(x)
@@ -173,3 +191,4 @@ plt.xlabel('位置 x')
 plt.ylabel('位置 y')
 plt.grid(True)
 plt.show()
+"""

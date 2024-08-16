@@ -6,11 +6,15 @@ from RRTController import RRT
 from scipy.optimize import minimize
 from Real_environment import DoubleGyreEnvironment
 import matplotlib.pyplot as plt
+import pandas as pd
 
 
 # 设置中文字体
 plt.rcParams['font.sans-serif'] = ['SimHei']  # 用黑体显示中文
 plt.rcParams['axes.unicode_minus'] = False  # 正常显示负号
+
+save_dir_1 = './output/position.csv'
+save_dir_2 = './output/strategy.csv'
 
 # 常数设置
 U_swim = 0.9
@@ -94,7 +98,7 @@ class Optimal_Controller:
             x_old = x_new
         dx = x_old[0] - self.goal[0]
         dy = x_old[1] - self.goal[1]
-        return hypot(dx, dy) - self.env.L / 50  # 末位置到达目标
+        return self.env.L / 50 - hypot(dx, dy)   # 末位置到达目标
 
     def plan(self):
         self._init_initial_guess()
@@ -104,7 +108,7 @@ class Optimal_Controller:
             self.N_optimal = step
             constraints = [{'type': 'ineq', 'fun': self.constraint_u_min},
                            {'type': 'ineq', 'fun': self.constraint_u_max},
-                           {'type': 'eq', 'fun': self.constraint_final_position}]
+                           {'type': 'ineq', 'fun': self.constraint_final_position}]
             objective = self.object
             guess = initial_guess[:step]
             print("\n")
@@ -130,6 +134,15 @@ print("智能体起点状态", x0)
 x_env_target = env_real.target
 xf = np.append(x_env_target, 0)  # 末状态
 print("智能体目标状态", xf)
+data = {
+    'start_x': [x0[0]],
+    'start_y': [x0[1]],
+    'start_t': [x0[2]],
+    'target_x': [xf[0]],
+    'target_y': [xf[1]],
+}
+df = pd.DataFrame(data)
+df.to_csv(save_dir_1, index=False)
 
 """""""""""
 r = random.uniform(0, 0.25 * L)
@@ -149,10 +162,17 @@ controller = Optimal_Controller(start=x0, target=xf, env=env_in, map_dimensions=
                                 use_rrt=True)
 
 optimal_result, rrt_result = controller.plan()
-#rrt_path = controller.rrt_path
 
-# 绘制轨迹
+
 U_opt = optimal_result.x
+# 保存优化控制输入 U_opt
+U_opt_data = {
+    'U_opt': U_opt
+}
+U_opt_df = pd.DataFrame(U_opt_data)
+U_opt_df.to_csv(save_dir_2, index=False)
+
+
 optimal_iter = 0  # 迭代计数器
 terminated = False
 truncated = False

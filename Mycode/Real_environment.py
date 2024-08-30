@@ -13,9 +13,8 @@ class DoubleGyreEnvironment(gym.Env):
 
     environment_name = "DoubleGyre"
 
-    def __init__(self, _init_t=None, field_file_path='', render_mode=None, is_fixed_start_and_target=True, seed=None,
-                 lamb=0.02,
-                 rho=10):
+    def __init__(self, _init_t=None, _init_zero=False, render_mode=None, is_fixed_start_and_target=True, seed=None
+                 , swap=False, swim_vel=0.9, _init_pair=None):
         """
         size: size (grid_height and grid_width) of canvas
         dt: time step
@@ -23,18 +22,21 @@ class DoubleGyreEnvironment(gym.Env):
         t_step: path periodicity
         """
         ######################### 流场相关参数 #########################
-        self.swim_vel = 0.9
-        self.A = 2 / 3 * self.swim_vel
-        self.omega = 20 * np.pi * self.swim_vel / 3
+        self.swim_vel = swim_vel
+        self.swim_background = 0.9
+        self.A = 2 / 3 * self.swim_background
+        self.omega = 20 * np.pi * self.swim_background / 3
         self.eps = 0.3
         self.x, self.y = 2, 1
         self.width = 201
         self.height = 101
+        self.L = 1
         if _init_t:
             print("Have _init_t")
             self.t_init = _init_t
         else:
             self.t_init = None
+        self._is_init_zero = _init_zero
         # 该组参数下，周期约为0.33s，reset中随机初始时间被hardcode为0.33s内随机。
         ######################### 仿真相关参数 #########################
         self.dt = 0.01
@@ -51,6 +53,7 @@ class DoubleGyreEnvironment(gym.Env):
         self.default_target = np.array([0.5, 0.5])
         self.start = self.default_start
         self.target = self.default_target
+        self._init_pair = _init_pair
         # 用于停止积分器的事件函数。当改函数为0时，积分器停止（即碰撞到某个边界时）
         self.land_event = lambda t, y: y[0] * (y[0] - self.x) * y[1] * (y[1] - self.y)
         self.land_event.terminal = True
@@ -76,11 +79,16 @@ class DoubleGyreEnvironment(gym.Env):
         # 一些环境最大最小值，是当前环境下试出来的
         self.o_max = -18.0  # 用来做用o渲染的color bar
         self.o_min = 18.0
+        self.swap_start_and_target = swap
+        self.ts_per_step = 1
+        self.x_min, self.x_max = 0, 2
+        self.y_min, self.y_max = 0, 1
         # self.u_min = -1.88  # 用来做归一化
         # self.u_max = 1.88
         # self.v_min = -2.22
         # self.v_max = 3.02
 
+    """""""""
     def step(self, input_action):
         # 裁剪action到取值范围
         pos_cur = self.agent_pos
@@ -133,11 +141,77 @@ class DoubleGyreEnvironment(gym.Env):
             self._render_frame()
 
         return _observation, _reward, _terminated, _truncated, _info
+    """
+
+    def step(self, input_action):
+        input_action = input_action
+        pos_cur = self.agent_pos
+        action_xy = np.array([self.swim_vel * math.cos(input_action), self.swim_vel * math.sin(input_action)])
+        self.action = input_action
+        _terminated = False
+        _truncated = False
+        _reward = 0
+        _info = self._get_info()
+        _observation = self._get_obs(input_info=_info)
+
+        # 更新位置
+        u = _info["u"]
+        v = _info["v"]
+        new_pos = self.agent_pos + (np.array([u, v]) + action_xy) * self.dt
+
+        self.agent_pos = new_pos
+        self.agent_pos_history.append(new_pos.copy())
+        self.t_step += self.ts_per_step
+
+        d = np.linalg.norm(new_pos - self.target)
+
+        # 检查出界
+        if not (self.x_min <= new_pos[0] <= self.x_max and self.y_min <= new_pos[1] <= self.y_max):
+            _truncated = True
+            _reward = -0
+            print(colored("**** Episode Finished **** Hit Boundary.", 'red'))
+        else:
+            # 检查超时
+            if self.t_step >= self.t_step_max:
+                _truncated = True
+                _reward = -0
+                print(colored("**** Episode Finished **** Reaches Env Time limit.", 'blue'))
+            # 正常情况
+            else:
+                # 检查终点
+                if d <= self.target_r * 2.5:
+                    mid = 0.5 * (new_pos + pos_cur)
+                    d_mid = np.linalg.norm(mid - self.target)
+                    if d_mid <= self.target_r or d <= self.target_r:
+                        _terminated = True
+                        _reward = 200
+                        print(colored("**** Episode Finished **** SUCCESS.", 'green'))
+                # 运行途中
+                # TODO: DoubleGyre Reward Shaping
+                else:
+                    _reward = -self.dt - 10 * (d - self.d_2_target) / self.swim_vel
+
+        self.d_2_target = d
+
+        if self.render_mode == 'human':
+            self._render_frame()
+
+        return _observation, _reward, _terminated, _truncated, _info
+
+    def agent_dynamics_withtime(self, state, action):
+        input_action = action
+        pos_cur = state
+        action_xy = np.array([self.swim_vel * math.cos(input_action), self.swim_vel * math.sin(input_action), 1])
+        u = self._get_u(state[0], state[1], state[2])
+        v = self._get_v(state[0], state[1], state[2])
+        # 更新位置
+        new_pos = pos_cur + (np.array([u, v, 0]) + action_xy) * self.dt
+        return new_pos
 
     @staticmethod
     def _normalize(_in, _min, _max, scale=1.0):
         """
-        进行一个大致的归一化，试图提升网络性能
+        # 进行一个大致的归一化，试图提升网络性能
         """
         return scale * 2 * (_in - _min) / (_max - _min) - 1
 
@@ -158,17 +232,26 @@ class DoubleGyreEnvironment(gym.Env):
         super().reset(seed=seed)
         # 重置时间
         if self.t_init:
-            # print("有初始化时间")
             self.t0 = self.t_init
         else:
-            self.t0 = np.random.uniform(0, 0.33)
-            # self.t0 = 0
+            if self._is_init_zero:
+                self.t0 = 0
+            else:
+                self.t0 = np.random.uniform(0, 0.33)
         print("初始化时间", self.t0)
         self.t_step = int(self.t0 / self.dt)
         # 重置位置
         if not self.is_fixed_start_and_target:
             self.start = self._rand_in_circle(self.default_start, 1 / 4)
             self.target = self._rand_in_circle(self.default_target, 1 / 4)
+            if self.swap_start_and_target:
+                if np.random.uniform() > 0.5:
+                    self.start = self._rand_in_circle(self.default_target, 1 / 4)
+                    self.target = self._rand_in_circle(self.default_start, 1 / 4)
+        else:
+            if self._init_pair:
+                self.start = np.array([self._init_pair[0], self._init_pair[1]])
+                self.target = np.array([self._init_pair[2], self._init_pair[3]])
         self.agent_pos = self.start
         self.d_2_target = np.linalg.norm(self.agent_pos - self.target)
         # 重置轨迹
@@ -190,9 +273,9 @@ class DoubleGyreEnvironment(gym.Env):
         # theta = np.arctan2(delta[1], delta[0])
         o = 0
 
-        u = self._get_u(self.agent_pos[0], self.agent_pos[1], self.t_step)
-        v = self._get_v(self.agent_pos[0], self.agent_pos[1], self.t_step)
-        o = self._get_o(self.agent_pos[0], self.agent_pos[1], self.t_step)
+        u = self._get_u(self.agent_pos[0], self.agent_pos[1], self.t_step * self.dt)
+        v = self._get_v(self.agent_pos[0], self.agent_pos[1], self.t_step * self.dt)
+        o = self._get_o(self.agent_pos[0], self.agent_pos[1], self.t_step * self.dt)
         Vel = math.sqrt(u ** 2 + v ** 2)
         if self.t_step != 0:
             u_last = self._get_u(self.agent_pos[0], self.agent_pos[1], self.t_step - 1)
@@ -294,6 +377,7 @@ class DoubleGyreEnvironment(gym.Env):
         rhs = lambda t, y: self._get_uv(t, y) + action
         # 定义微分方程求解器，要积分的东西是rhs，积分范围是(time, time + self.dt)
         # event是一个用于判断是否出界的函数，出界为0不出为1。solve_ivp按照时间步长进行积分，如果算着算着发现event从1变0，就立刻停止。
+        # 积分器，十步积分
         sol = solve_ivp(rhs, (time, time + self.dt), self.agent_pos, events=self.land_event, max_step=self.dt / 10)
         # sol.t为1*n大小，储存各个积分节点的时间t，开始和终点都会算进去
         # sol.y为2*n大小，储存各个积分节点的位置横纵坐标
@@ -347,13 +431,18 @@ class DoubleGyreEnvironment(gym.Env):
         # 画出agent轨迹及起终点
         agent_positions = np.array(self.agent_pos_history)
         plt.plot(agent_positions[:, 0], agent_positions[:, 1], 'b-')
-        plt.scatter(agent_positions[-1, 0], agent_positions[-1, 1], c='blue', label='Agent')
-        plt.scatter(*self.target, c='red', label='Target')
-        plt.scatter(*self.start, c='green', label='Start')
+        plt.scatter(agent_positions[-1, 0], agent_positions[-1, 1], c='blue', label='Agent', s=5)
+        plt.scatter(*self.target, c='red', label='Target', s=5)
+        plt.scatter(*self.start, c='green', label='Start', s=5)
+        circle_center = (float(self.target[0]), float(self.target[1]))
+        # 修正圆圈的绘制代码
+        circle = plt.Circle(circle_center, radius=self.target_r, color='red', fill=False,
+                            linestyle='--')
+        plt.gca().add_patch(circle)
         # 画出agent运动方向
         if self.action is not None:
             plt.arrow(float(self.agent_pos[0]), float(self.agent_pos[1]), 0.15 * math.cos(self.action),
-                      0.15 * math.sin(self.action), shape='full', color='blue', linewidth=2, head_width=0.04,
+                      0.15 * math.sin(self.action), shape='full', color='blue', linewidth=2, head_width=0.02,
                       length_includes_head=True)
         plt.legend()
 

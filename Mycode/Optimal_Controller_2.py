@@ -1,13 +1,11 @@
 import numpy as np
 import random
 from math import *
-from FlowEnvironment import Double_gyre_Flow
-from RRTController import RRT
+from RRTController_2 import RRT
 from scipy.optimize import minimize
 from Real_environment import DoubleGyreEnvironment
 import matplotlib.pyplot as plt
 import pandas as pd
-
 
 # 设置中文字体
 plt.rcParams['font.sans-serif'] = ['SimHei']  # 用黑体显示中文
@@ -17,14 +15,9 @@ save_dir_1 = './output/position.csv'
 save_dir_2 = './output/strategy.csv'
 
 # 常数设置
-U_swim = 0.9
 epsilon = 0.3
 L = 1
 dt = 0.01
-A = 2 * U_swim / 3
-omega = 20 * pi * U_swim / (3 * L)
-
-env_in = Double_gyre_Flow(U_swim=U_swim, L=L, epsilon=epsilon, dt=dt)
 
 
 # 结合RRT控制器使用的最优化控制器
@@ -54,7 +47,7 @@ class Optimal_Controller:
                 print(f'RRT LOOP {i}')
                 print("当前最短时间步:", len_old)
                 rrt = RRT(self.start, self.goal, self.env, self.map_dimensions,
-                          expand_distance=self.env.L / 50, obstacle_list=None)
+                          expand_distance=0.9 * self.env.L / 50, obstacle_list=None)
                 path, time_list, action_list = rrt.plan()
                 # 如果成功寻找到了轨迹
                 if path:
@@ -98,7 +91,7 @@ class Optimal_Controller:
             x_old = x_new
         dx = x_old[0] - self.goal[0]
         dy = x_old[1] - self.goal[1]
-        return self.env.L / 50 - hypot(dx, dy)   # 末位置到达目标
+        return 0.99 * self.env.L / 50 - hypot(dx, dy)  # 末位置到达目标
 
     def plan(self):
         self._init_initial_guess()
@@ -118,22 +111,82 @@ class Optimal_Controller:
                 print("\n")
                 print(f"################## SUCCESS WITH MAX_STEPS={self.N_optimal} ##################")
                 out_put = result
+                initial_guess = out_put.x
             else:
                 break
         return out_put, self.rrt_result
 
 
-env_real = DoubleGyreEnvironment(render_mode='human', _init_t=0.01, is_fixed_start_and_target=True)
-env_real.reset()
-# 仿真条件和相关变量
-t0 = env_real.t0  # 仿真开始时间
-print("开始时间", t0)
-x_env_start = env_real.agent_pos
-x0 = np.append(x_env_start, t0)  # 起点状态
-print("智能体起点状态", x0)
-x_env_target = env_real.target
-xf = np.append(x_env_target, 0)  # 末状态
-print("智能体目标状态", xf)
+#################### 开始测试 ######################
+#is_swap = 1
+is_swap = 0
+is_fixed_time = 0
+#test_swim_vel = 0.9
+#test_swim_vel = 0.8
+test_swim_vel = 0.7
+
+
+# 文件保存路径
+save_file_path = f'./output/swap_{is_swap}_swim_speed_{test_swim_vel}_is_fixed_time_{is_fixed_time}.csv'
+# 定义保存结果的 DataFrame
+columns = ['start_x', 'start_y', 'start_t', 'target_x', 'target_y', 'navigation_time']
+results_df = pd.DataFrame(columns=columns)
+results_df.to_csv(save_file_path, index=False)  # 写入文件头部
+
+# 设置重复次数
+num_repeats = 450
+
+# 设置环境
+env_real = DoubleGyreEnvironment(render_mode=None, _init_t=None, _init_zero=False, is_fixed_start_and_target=False,
+                                 swim_vel=test_swim_vel,
+                                 swap=False)
+
+# 设置控制器参数
+u_min_in = np.array([-pi])
+u_max_in = np.array([pi])
+N = 400
+
+# 执行操作
+for i in range(num_repeats):
+    print("################################################")
+    print(f"episode:{i + 1}")
+    env_real.reset()
+    # 仿真条件和相关变量
+    t0 = env_real.t0  # 仿真开始时间
+    print("开始时间", t0)
+    x_env_start = env_real.agent_pos
+    x0 = np.append(x_env_start, t0)  # 起点状态
+    print("智能体起点状态", x0)
+    x_env_target = env_real.target
+    xf = np.append(x_env_target, 0)  # 末状态
+    print("智能体目标状态", xf)
+    controller = Optimal_Controller(start=x0, target=xf, env=env_real, map_dimensions=[0, 3],
+                                    u_min=u_min_in, u_max=u_max_in, time_steps=N, rrt_times=5,
+                                    use_rrt=True)
+    optimal_result, rrt_result = controller.plan()
+    if not optimal_result:
+        continue
+    U_opt = optimal_result.x
+    navigation_time = len(U_opt) * env_real.dt
+    # 保存到 DataFrame
+    result = {
+        'start_x': x0[0],
+        'start_y': x0[1],
+        'start_t': x0[2],
+        'target_x': xf[0],
+        'target_y': xf[1],
+        'navigation_time': navigation_time
+    }
+    result_df = pd.DataFrame([result])
+    result_df.to_csv(save_file_path, mode='a', header=False, index=False)  # 追加写入
+    print(f"Round {i + 1} results saved.")
+    print("\n")
+
+print(f"All results saved to {save_file_path}")
+##########################################
+
+
+"""""""""
 data = {
     'start_x': [x0[0]],
     'start_y': [x0[1]],
@@ -143,34 +196,60 @@ data = {
 }
 df = pd.DataFrame(data)
 df.to_csv(save_dir_1, index=False)
-
-"""""""""""
-r = random.uniform(0, 0.25 * L)
-angle = random.uniform(0, 2 * pi)
-t_in = np.random.uniform(0, 0.33)
-x0 = np.array([1.5 * L + r * cos(angle), 0.5 * L + r * sin(angle), t_in])
-xf = np.array([0.5 * L + r * cos(angle), 0.25 * L + r * sin(angle), 0])
-# x0 = np.array([1.5 * L, 0.5 * L, 0])
-# xf = np.array([0.75 * L, 0.5 * L, 0])
 """
 
-u_min_in = np.array([-pi])
-u_max_in = np.array([pi])
-N = 200
-controller = Optimal_Controller(start=x0, target=xf, env=env_in, map_dimensions=[0, 3],
-                                u_min=u_min_in, u_max=u_max_in, time_steps=N, rrt_times=10,
-                                use_rrt=True)
-
-optimal_result, rrt_result = controller.plan()
-
-
-U_opt = optimal_result.x
+"""""""""
 # 保存优化控制输入 U_opt
 U_opt_data = {
     'U_opt': U_opt
 }
 U_opt_df = pd.DataFrame(U_opt_data)
 U_opt_df.to_csv(save_dir_2, index=False)
+"""
+
+"""""""""
+# 文件保存路径
+point_pair = [1.5, 0.5, 0.5, 0.5]
+#point_pair = [1.6, 0.6, 0.4, 0.4]
+#point_pair = [0.4, 0.4, 1.4, 0.6]
+save_file_path = f'./output/swim_speed_{test_swim_vel}_start_x_{point_pair[0]}.csv'
+# 定义保存结果的 DataFrame
+columns = ['pos_x', 'pos_y', 'navigation_t']
+results_df = pd.DataFrame(columns=columns)
+results_df.to_csv(save_file_path, index=False)  # 写入文件头部
+
+env_real = DoubleGyreEnvironment(render_mode='human', _init_t=None, _init_zero=True, is_fixed_start_and_target=True,
+                                 swim_vel=test_swim_vel,
+                                 swap=False, _init_pair=None)
+env_real.reset()
+u_min_in = np.array([-pi])
+u_max_in = np.array([pi])
+N = 400
+# 仿真条件和相关变量
+t0 = env_real.t0  # 仿真开始时间
+print("开始时间", t0)
+x_env_start = env_real.agent_pos
+x0 = np.append(x_env_start, t0)  # 起点状态
+print("智能体起点状态", x0)
+x_env_target = env_real.target
+xf = np.append(x_env_target, 0)  # 末状态
+print("智能体目标状态", xf)
+controller = Optimal_Controller(start=x0, target=xf, env=env_real, map_dimensions=[0, 3],
+                                u_min=u_min_in, u_max=u_max_in, time_steps=N, rrt_times=5,
+                                use_rrt=True)
+
+
+result = {
+    'pos_x': env_real.agent_pos[0],
+    'pos_y': env_real.agent_pos[1],
+    'navigation_t': env_real.t_step * env_real.dt
+}
+result_df = pd.DataFrame([result])
+result_df.to_csv(save_file_path, mode='a', header=False, index=False)  # 追加写入
+
+
+optimal_result, rrt_result = controller.plan()
+U_opt = optimal_result.x
 
 
 optimal_iter = 0  # 迭代计数器
@@ -182,33 +261,15 @@ while not (terminated or truncated) or optimal_iter < len(U_opt):
     print("控制器输入", U_opt[optimal_iter])
     # 真实的状态转移
     _, _, terminated, truncated, _ = env_real.step(U_opt[optimal_iter])
+
+    result = {
+        'pos_x': env_real.agent_pos[0],
+        'pos_y': env_real.agent_pos[1],
+        'navigation_t': env_real.t_step * env_real.dt
+    }
+    result_df = pd.DataFrame([result])
+    result_df.to_csv(save_file_path, mode='a', header=False, index=False)  # 追加写入
+
     # 计数器+1
     optimal_iter += 1
-
-"""""""""
-x = x0
-trajectory = [x]
-N_step = len(U_opt)
-for k in range(N_step):
-    x = env_in.agent_dynamics_withtime(x, U_opt[k], mode='math')
-    trajectory.append(x)
-    if env_in.distance_to_goal(x, xf) <= L / 50:
-        break
-
-state_trajectory = np.array(trajectory)
-
-print("末位置", trajectory[-1])
-print("时间步长", k)
-print(f'距离差:{env_in.distance_to_goal(trajectory[-1], xf)};限制距离:{L / 50}')
-
-plt.plot(state_trajectory[:, 0], state_trajectory[:, 1], marker='o')
-plt.plot(x0[0], x0[1], 'ro', label='Start Position')
-plt.plot(xf[0], xf[1], 'go', label='Target Position')
-circle = plt.Circle((xf[0], xf[1]), radius=L / 50, color='g', fill=False, linestyle='--', linewidth=1.5)
-plt.gca().add_patch(circle)
-plt.title('系统状态轨迹')
-plt.xlabel('位置 x')
-plt.ylabel('位置 y')
-plt.grid(True)
-plt.show()
 """

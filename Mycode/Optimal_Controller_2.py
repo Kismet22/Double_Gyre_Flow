@@ -3,6 +3,7 @@ import random
 from math import *
 from RRTController_2 import RRT
 from scipy.optimize import minimize
+# from Real_environment_2 import DoubleGyreEnvironment
 from Real_environment import DoubleGyreEnvironment
 import matplotlib.pyplot as plt
 import pandas as pd
@@ -121,11 +122,11 @@ class Optimal_Controller:
 #is_swap = 1
 is_swap = 0
 is_fixed_time = 0
-#test_swim_vel = 0.9
+test_swim_vel = 0.9
 #test_swim_vel = 0.8
-test_swim_vel = 0.7
+#test_swim_vel = 0.7
 
-
+""""
 # 文件保存路径
 save_file_path = f'./output/swap_{is_swap}_swim_speed_{test_swim_vel}_is_fixed_time_{is_fixed_time}.csv'
 # 定义保存结果的 DataFrame
@@ -144,7 +145,7 @@ env_real = DoubleGyreEnvironment(render_mode=None, _init_t=None, _init_zero=Fals
 # 设置控制器参数
 u_min_in = np.array([-pi])
 u_max_in = np.array([pi])
-N = 400
+N = 398
 
 # 执行操作
 for i in range(num_repeats):
@@ -160,9 +161,10 @@ for i in range(num_repeats):
     x_env_target = env_real.target
     xf = np.append(x_env_target, 0)  # 末状态
     print("智能体目标状态", xf)
+    # 测试:不使用RRT
     controller = Optimal_Controller(start=x0, target=xf, env=env_real, map_dimensions=[0, 3],
                                     u_min=u_min_in, u_max=u_max_in, time_steps=N, rrt_times=5,
-                                    use_rrt=True)
+                                    use_rrt=False)
     optimal_result, rrt_result = controller.plan()
     if not optimal_result:
         continue
@@ -184,7 +186,7 @@ for i in range(num_repeats):
 
 print(f"All results saved to {save_file_path}")
 ##########################################
-
+"""
 
 """""""""
 data = {
@@ -207,10 +209,10 @@ U_opt_df = pd.DataFrame(U_opt_data)
 U_opt_df.to_csv(save_dir_2, index=False)
 """
 
-"""""""""
 # 文件保存路径
-point_pair = [1.5, 0.5, 0.5, 0.5]
-#point_pair = [1.6, 0.6, 0.4, 0.4]
+#point_pair = [1.5, 0.5, 0.5, 0.5]
+t_in = 0.01
+point_pair = [1.6, 0.6, 0.4, 0.4]
 #point_pair = [0.4, 0.4, 1.4, 0.6]
 save_file_path = f'./output/swim_speed_{test_swim_vel}_start_x_{point_pair[0]}.csv'
 # 定义保存结果的 DataFrame
@@ -218,9 +220,10 @@ columns = ['pos_x', 'pos_y', 'navigation_t']
 results_df = pd.DataFrame(columns=columns)
 results_df.to_csv(save_file_path, index=False)  # 写入文件头部
 
-env_real = DoubleGyreEnvironment(render_mode='human', _init_t=None, _init_zero=True, is_fixed_start_and_target=True,
+
+env_real = DoubleGyreEnvironment(render_mode='human', _init_t=t_in, _init_zero=True, is_fixed_start_and_target=True,
                                  swim_vel=test_swim_vel,
-                                 swap=False, _init_pair=None)
+                                 swap=False, _init_pair=point_pair, save_render=True)
 env_real.reset()
 u_min_in = np.array([-pi])
 u_max_in = np.array([pi])
@@ -238,7 +241,6 @@ controller = Optimal_Controller(start=x0, target=xf, env=env_real, map_dimension
                                 u_min=u_min_in, u_max=u_max_in, time_steps=N, rrt_times=5,
                                 use_rrt=True)
 
-
 result = {
     'pos_x': env_real.agent_pos[0],
     'pos_y': env_real.agent_pos[1],
@@ -247,10 +249,8 @@ result = {
 result_df = pd.DataFrame([result])
 result_df.to_csv(save_file_path, mode='a', header=False, index=False)  # 追加写入
 
-
 optimal_result, rrt_result = controller.plan()
 U_opt = optimal_result.x
-
 
 optimal_iter = 0  # 迭代计数器
 terminated = False
@@ -272,4 +272,3 @@ while not (terminated or truncated) or optimal_iter < len(U_opt):
 
     # 计数器+1
     optimal_iter += 1
-"""

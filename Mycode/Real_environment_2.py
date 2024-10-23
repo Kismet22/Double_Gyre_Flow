@@ -1,11 +1,11 @@
 import gymnasium as gym
-import casadi as ca
 import numpy as np
 from gymnasium.utils import seeding
 from gymnasium import spaces
 from scipy.integrate import solve_ivp
 import matplotlib.pyplot as plt
 import math
+from scipy.io import loadmat
 from termcolor import colored
 
 
@@ -15,7 +15,7 @@ class DoubleGyreEnvironment(gym.Env):
     environment_name = "DoubleGyre"
 
     def __init__(self, _init_t=None, _init_zero=False, render_mode=None, is_fixed_start_and_target=True, seed=None
-                 , swap=False, swim_vel=0.9, _init_pair=None, save_render=False):
+                 , swap=False, swim_vel=0.9, _init_pair=None):
         """
         size: size (grid_height and grid_width) of canvas
         dt: time step
@@ -23,6 +23,15 @@ class DoubleGyreEnvironment(gym.Env):
         t_step: path periodicity
         """
         ######################### 流场相关参数 #########################
+        file_path = './flow_field/DoubleGyre_grid_0.0to2.0of401_0.0to1.0of201.mat'
+        # 读取流场数据
+        self.field_data = loadmat(file_path)
+        self.x_grid = self.field_data['x_grid']  # 401 * 201
+        self.y_grid = self.field_data['y_grid']  # 401 * 201
+        self.u_grid = self.field_data['u_grid']  # 100 * 401 * 201
+        self.v_grid = self.field_data['v_grid']
+        self.o_grid = self.field_data['o_grid']
+        self.Vel_grid = self.field_data['Vel_grid']
         self.swim_vel = swim_vel
         self.swim_background = 0.9
         self.A = 2 / 3 * self.swim_background
@@ -84,66 +93,10 @@ class DoubleGyreEnvironment(gym.Env):
         self.ts_per_step = 1
         self.x_min, self.x_max = 0, 2
         self.y_min, self.y_max = 0, 1
-        self.save_render = save_render
         # self.u_min = -1.88  # 用来做归一化
         # self.u_max = 1.88
         # self.v_min = -2.22
         # self.v_max = 3.02
-
-    """""""""
-    def step(self, input_action):
-        # 裁剪action到取值范围
-        pos_cur = self.agent_pos
-        action_xy = np.array([self.swim_vel * math.cos(input_action), self.swim_vel * math.sin(input_action)])
-        self.action = input_action
-        _terminated = False  # success
-        _truncated = False  # 截断，超时或出界
-        _reward = 0
-        _info = self._get_info()
-        _observation = self._get_obs(input_info=_info)
-
-        # 仿真dt，返回新的位置 & 是否出界
-        pos_new, _truncated = self._solve_ivp(action_xy)
-
-        # 保险，确保ivp没写错，返回的东西在界内
-        if pos_new[0] < 0 or pos_new[0] > self.x or pos_new[1] < 0 or pos_new[1] > self.y:
-            raise ValueError(pos_new, "Out of bounds!")
-        self.agent_pos = pos_new
-        # NOTE: 轨迹记录已经在solve_ivp中完成
-        self.t_step += 1
-        d = np.linalg.norm(pos_new - self.target)
-
-        # 检查出界
-        if _truncated:
-            _reward -= 0
-            print(colored("**** Episode Finished **** Hit Boundary.", 'red'))
-        # 没出界
-        else:
-            # 检查超时
-            if self.t_step >= self.t_step_max:
-                _truncated = True
-                _reward = 0
-                print(colored("**** Episode Finished **** Reaches Env Time limit.", 'blue'))
-            # 正常情况
-            # 检查终点，避免仿真步中冲过终点的小区域，再检查个中点
-            if d <= self.target_r * 2.5:
-                mid = 0.5 * (pos_new + pos_cur)
-                d_mid = np.linalg.norm(mid - self.target)
-                if d_mid <= self.target_r or d <= self.target_r:
-                    _terminated = True
-                    _reward = 200
-                    print(colored("**** Episode Finished **** SUCCESS.", 'green'))
-            # 没到终点
-            else:  # TODO: Reward Shaping
-                _reward = -self.dt - 20 * (d - self.d_2_target) / self.swim_vel
-
-        self.d_2_target = d
-
-        if self.render_mode == 'human':
-            self._render_frame()
-
-        return _observation, _reward, _terminated, _truncated, _info
-    """
 
     def step(self, input_action):
         input_action = input_action
@@ -201,14 +154,25 @@ class DoubleGyreEnvironment(gym.Env):
         return _observation, _reward, _terminated, _truncated, _info
 
     def agent_dynamics_withtime(self, state, action):
+        #print("初始时间", self.t0)
+        t_step = int(state[2] / self.dt)
+        #print("当前时间步", t_step)
         input_action = action
         pos_cur = state
         action_xy = np.array([self.swim_vel * math.cos(input_action), self.swim_vel * math.sin(input_action), 1])
-        u = self._get_u(state[0], state[1], state[2])
-        v = self._get_v(state[0], state[1], state[2])
+        t_index = self.env_cycle(t_step)
+        # RRT方法，存在栅格空间大小不足的问题
+        x_index = int((state[0] - self.x_grid[0, 0]) / (self.x_grid[1, 0] - self.x_grid[0, 0]))
+        y_index = int((state[1] - self.y_grid[0, 0]) / (self.y_grid[0, 1] - self.y_grid[0, 0]))
+        u = self.u_grid[t_index, x_index, y_index]
+        v = self.v_grid[t_index, x_index, y_index]
         # 更新位置
         new_pos = pos_cur + (np.array([u, v, 0]) + action_xy) * self.dt
         return new_pos
+
+    @staticmethod
+    def env_cycle(t_step, T=99):
+        return int(t_step % T)
 
     @staticmethod
     def _normalize(_in, _min, _max, scale=1.0):
@@ -266,22 +230,17 @@ class DoubleGyreEnvironment(gym.Env):
         return observation, info
 
     def _get_info(self):
-        """
-        更丰富的信息
-        :return:
-        """
         delta = self.target - self.agent_pos
-        # d = np.linalg.norm(delta)
-        # theta = np.arctan2(delta[1], delta[0])
-        o = 0
-
-        u = self._get_u(self.agent_pos[0], self.agent_pos[1], self.t_step * self.dt)
-        v = self._get_v(self.agent_pos[0], self.agent_pos[1], self.t_step * self.dt)
-        o = self._get_o(self.agent_pos[0], self.agent_pos[1], self.t_step * self.dt)
+        t_index = self.env_cycle(self.t0 / self.dt + self.t_step)
+        x_index = int((self.agent_pos[0] - self.x_grid[0, 0]) / (self.x_grid[1, 0] - self.x_grid[0, 0]))
+        y_index = int((self.agent_pos[1] - self.y_grid[0, 0]) / (self.y_grid[0, 1] - self.y_grid[0, 0]))
+        u = self.u_grid[t_index, x_index, y_index]
+        v = self.v_grid[t_index, x_index, y_index]
+        o = self.o_grid[t_index, x_index, y_index]
         Vel = math.sqrt(u ** 2 + v ** 2)
         if self.t_step != 0:
-            u_last = self._get_u(self.agent_pos[0], self.agent_pos[1], self.t_step - 1)
-            v_last = self._get_v(self.agent_pos[0], self.agent_pos[1], self.t_step - 1)
+            u_last = self.u_grid[t_index - 1, x_index, y_index]
+            v_last = self.v_grid[t_index - 1, x_index, y_index]
             _du = u - u_last
             _dv = v - v_last
             du = _du / self.dt if _du != 0 else 0
@@ -453,8 +412,3 @@ class DoubleGyreEnvironment(gym.Env):
         plt.title(f'Double Gyre Environment (t={self.t0 + self.t_step * self.dt:.2f})', fontsize=14)
         plt.draw()
         plt.pause(self.frame_pause)
-
-        # 如果需要，保存最后一张轨迹的图像
-        save_dir = 'final_frame.png'
-        if self.save_render:
-            plt.savefig(save_dir)

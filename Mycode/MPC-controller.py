@@ -83,7 +83,7 @@ class MPCController:
         for i_step in range(self.N):
             obj = obj + ca.mtimes([(X[:, i_step] - P[self.n_states:]).T, self.Q, X[:, i_step] - P[self.n_states:]])
 
-        # 动作约束，减少动作与动作之间输出的变化幅度
+        # 动作约束，减少动作与动作之间输出的变化幅度,在靠近终点的末端能起到一定的限制效果
         for i_step in range(1, self.N):
             obj += ca.mtimes([(U[:, i_step] - U[:, i_step - 1]).T, self.R, (U[:, i_step] - U[:, i_step - 1])])
 
@@ -145,9 +145,9 @@ Q = np.zeros((3, 3))  # 全零 2x2 矩阵，用于惩罚位置
 Q[:2, :2] = np.array([[10.0, 0.0],
                       [0.0, 10.0]])
 # 时间目标
-Q[2][2] = 10.0
+Q[2][2] = 0.0
 # 动作目标
-R = np.array([0.0])
+R = np.array([1.0])
 
 N = 50  # 每个状态进行预测的步数
 control_max = ca.pi
@@ -158,7 +158,7 @@ for _ in range(N):
     lbx.append(-control_max)
     ubx.append(control_max)
 
-env = DoubleGyreEnvironment(render_mode='human')
+env = DoubleGyreEnvironment(render_mode='human', _init_t=0.01, is_fixed_start_and_target=True, save_render=True)
 env.reset()
 env_1 = Double_gyre_Flow(U_swim=U_swim, epsilon=epsilon, L=L, dt=dt, mode='casadi')
 mpc = MPCController(delta_t=dt, p_n_steps=N, states_object=Q, actions_object=R,
